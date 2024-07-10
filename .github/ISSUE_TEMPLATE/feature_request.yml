@@ -5,10 +5,10 @@ labels: enhancement
 body:
   - type: checkboxes
     attributes:
-      label: CHECK EXISTING ISSUES
-      description: Check existing open and closed issues to prevent duplicates. Use the search field at the top of the issue tracker. Only submit a new issue if it has not been covered by an existing issue.
+      label: Check Existing Issues
+      description: Check existing open and closed issues to prevent duplicates. Use the search field at the top of the issue tracker. Please only submit a new issue if it has not been covered by an existing issue.
       options:
-        - label: I have searched existing issues, and this feature has not been requested
+        - label: I have searched existing issues, and this issue is not a duplicate
           required: true
   - type: textarea
     attributes:
