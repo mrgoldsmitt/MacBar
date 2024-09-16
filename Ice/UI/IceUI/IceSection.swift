@@ -72,27 +72,16 @@ struct IceSection<Header: View, Content: View, Footer: View>: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading) {
+        IceGroupBox(padding: spacing) {
             header
+        } content: {
             _VariadicView.Tree(IceSectionLayout(spacing: spacing)) {
                 content
                     .frame(maxWidth: .infinity)
             }
-            .background {
-                backgroundShape
-                    .fill(.quinary)
-                    .overlay {
-                        backgroundShape
-                            .stroke(.quaternary)
-                    }
-            }
+        } footer: {
             footer
         }
-    }
-
-    @ViewBuilder
-    private var backgroundShape: some Shape {
-        RoundedRectangle(cornerRadius: 7, style: .circular)
     }
 }
 
@@ -110,6 +99,5 @@ private struct IceSectionLayout: _VariadicView_UnaryViewRoot {
                 }
             }
         }
-        .padding(spacing)
     }
 }
