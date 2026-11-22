@@ -3,7 +3,7 @@
 //  MenuBarItemService
 //
 
-import AXSwift
+import ApplicationServices
 import Cocoa
 import Combine
 import os
@@ -27,7 +27,7 @@ final class SourcePIDCache {
     /// identifier and extras menu bar.
     private final class CachedApplication {
         private let runningApp: NSRunningApplication
-        private var extrasMenuBar: UIElement?
+        private var extrasMenuBar: AXUIElement?
 
         /// The app's process identifier.
         var processIdentifier: pid_t {
@@ -62,7 +62,7 @@ final class SourcePIDCache {
         ///
         /// When the element is first created, it gets stored for efficient
         /// access on subsequent calls.
-        func getOrCreateExtrasMenuBar() -> UIElement? {
+        func getOrCreateExtrasMenuBar() -> AXUIElement? {
             if let extrasMenuBar {
                 return extrasMenuBar
             }

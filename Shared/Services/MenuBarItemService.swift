@@ -6,7 +6,7 @@
 import Foundation
 
 enum MenuBarItemService {
-    static let name = "com.jordanbaird.Ice.MenuBarItemService"
+    static let name = "com.macbar.MacBar.MenuBarItemService"
 }
 
 extension MenuBarItemService {

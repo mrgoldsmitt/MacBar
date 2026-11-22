@@ -28,13 +28,22 @@ struct AdvancedSettingsPane: View {
             IceSection("Menu Bar Sections") {
                 enableAlwaysHiddenSection
                 showAllSectionsOnUserDrag
-                sectionDividerStyle
+                // Dividers leave the bar / stay collapsed on macOS 27, so they have no style.
+                if #unavailable(macOS 27.0) {
+                    sectionDividerStyle
+                }
             }
             IceSection("Other") {
-                hideApplicationMenus
+                // macOS 27 folds items behind its own overflow button and opens hidden items
+                // without moving them, so neither option applies there.
+                if #unavailable(macOS 27.0) {
+                    hideApplicationMenus
+                }
                 enableSecondaryContextMenu
                 showOnHoverDelay
-                tempShowInterval
+                if #unavailable(macOS 27.0) {
+                    tempShowInterval
+                }
             }
             if #available(macOS 27.0, *) {
                 IceSection("Hiding on macOS 27") {
@@ -82,7 +91,7 @@ struct AdvancedSettingsPane: View {
     private var showCaptureIndicator: some View {
         Toggle(isOn: $settings.showCaptureIndicator) {
             Text("Show a camera and microphone indicator")
-            Text("macOS draws none of its own while Ice is hiding items. Click Ice's to open Control Centre.")
+            Text("macOS draws none of its own while MacBar is hiding items. Click MacBar's to open Control Centre.")
         }
     }
 
@@ -121,7 +130,7 @@ struct AdvancedSettingsPane: View {
             Text(
                 """
                 Make more room in the menu bar by hiding the current app menus if \
-                needed. macOS requires Ice to make itself visible in the Dock while \
+                needed. macOS requires MacBar to make itself visible in the Dock while \
                 this setting is in effect.
                 """
             )
@@ -139,7 +148,7 @@ struct AdvancedSettingsPane: View {
             Text(
                 """
                 Right-click in an empty area of the menu bar to display a minimal \
-                version of Ice's menu. Disable this setting if you encounter conflicts \
+                version of MacBar's menu. Disable this setting if you encounter conflicts \
                 with other apps.
                 """
             )

@@ -14,11 +14,11 @@ final class ControlItem {
     /// An identifier for a control item.
     enum Identifier: String, CaseIterable {
         /// The identifier for the control item for the visible section.
-        case visible = "Ice.ControlItem.Visible"
+        case visible = "MacBar.ControlItem.Visible"
         /// The identifier for the control item for the hidden section.
-        case hidden = "Ice.ControlItem.Hidden"
+        case hidden = "MacBar.ControlItem.Hidden"
         /// The identifier for the control item for the always-hidden section.
-        case alwaysHidden = "Ice.ControlItem.AlwaysHidden"
+        case alwaysHidden = "MacBar.ControlItem.AlwaysHidden"
 
         /// A tag for the control item with this identifier.
         var tag: MenuBarItemTag {
@@ -600,10 +600,10 @@ final class ControlItem {
             appState.settings.hotkeys.hotkey(withAction: action)
         }
 
-        let menu = NSMenu(title: "Ice")
+        let menu = NSMenu(title: "MacBar")
 
         let settingsItem = NSMenuItem(
-            title: "Ice Settings…",
+            title: "MacBar Settings…",
             action: #selector(AppDelegate.openSettingsWindow),
             keyEquivalent: ","
         )
@@ -656,18 +656,8 @@ final class ControlItem {
 
         menu.addItem(.separator())
 
-        let checkForUpdatesItem = NSMenuItem(
-            title: "Check for Updates…",
-            action: #selector(checkForUpdates),
-            keyEquivalent: ""
-        )
-        checkForUpdatesItem.target = self
-        menu.addItem(checkForUpdatesItem)
-
-        menu.addItem(.separator())
-
         let quitItem = NSMenuItem(
-            title: "Quit Ice",
+            title: "Quit MacBar",
             action: #selector(NSApp.terminate),
             keyEquivalent: "q"
         )
@@ -697,14 +687,6 @@ final class ControlItem {
     /// Opens the menu bar search panel.
     @objc private func showSearchPanel() {
         appState?.menuBarManager.searchPanel.show()
-    }
-
-    /// Opens the settings window and checks for app updates.
-    @objc private func checkForUpdates() {
-        guard let appState else {
-            return
-        }
-        appState.updatesManager.checkForUpdates()
     }
 }
 

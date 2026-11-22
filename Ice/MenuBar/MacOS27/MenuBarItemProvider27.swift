@@ -60,7 +60,7 @@ enum MenuBarItemProvider27 {
 
     /// Accessibility calls block, so they run on their own queue, off the Swift
     /// concurrency pool (see `MenuBarItemImageCache.captureQueue`).
-    private static let queue = DispatchQueue(label: "com.jordanbaird.Ice.MenuBarItemProvider27", qos: .userInitiated)
+    private static let queue = DispatchQueue(label: "com.macbar.MacBar.MenuBarItemProvider27", qos: .userInitiated)
 
     private static let lock = NSLock()
     nonisolated(unsafe) private static var entries = [CGWindowID: Entry]()
@@ -68,6 +68,9 @@ enum MenuBarItemProvider27 {
     /// The system overflow control of each display's bar, from the last read.
     nonisolated(unsafe) private static var lastOverflowIndicators = [CGDirectDisplayID: OverflowIndicator]()
     nonisolated(unsafe) private static var lastSystemItemFrames = [CGRect]()
+    /// Frames of drawn items that cannot be hidden, such as the button that stops a screen
+    /// recording. MacBar's item cache leaves them out, so hit-testing needs them from here.
+    nonisolated(unsafe) private static var lastUnhideableItemFrames = [CGRect]()
     /// System item frames per display. MenuBarAgent describes the bars of both displays in its
     /// windows, unlike other applications, whose items only have frames on the active one.
     nonisolated(unsafe) private static var lastSystemFramesByDisplay = [CGDirectDisplayID: [CGRect]]()
@@ -148,6 +151,33 @@ enum MenuBarItemProvider27 {
     /// Frames of the system items hosted by MenuBarAgent, from the last read.
     static func systemItemFrames() -> [CGRect] {
         lock.withLock { lastSystemItemFrames }
+    }
+
+    /// Whether Accessibility finds a menu bar item at the given point, whichever process owns it.
+    static func hasItem(at point: CGPoint) async -> Bool {
+        await Task.detached(priority: .userInitiated) {
+            let systemWide = AXUIElementCreateSystemWide()
+            AXUIElementSetMessagingTimeout(systemWide, 0.25)
+            var element: AXUIElement?
+            guard
+                AXUIElementCopyElementAtPosition(systemWide, Float(point.x), Float(point.y), &element) == .success,
+                let element
+            else {
+                return false
+            }
+            if string(element, kAXSubroleAttribute) == "AXMenuExtra" {
+                return true
+            }
+            guard let parent = Self.element(element, kAXParentAttribute) else {
+                return false
+            }
+            return string(parent, kAXSubroleAttribute) == "AXMenuExtra"
+        }.value
+    }
+
+    /// Frames of the drawn items that cannot be hidden, from the last read.
+    static func unhideableItemFrames() -> [CGRect] {
+        lock.withLock { lastUnhideableItemFrames }
     }
 
     /// The Accessibility element of the system item drawn at the given point, from the last
@@ -454,8 +484,15 @@ enum MenuBarItemProvider27 {
             }
             .map(\.bounds.minX)
             .min()
+        let unhideableFrames = items
+            .filter { item in
+                item.isOnScreen && !item.canBeHidden && item.tag.namespace != .menuBarAgent &&
+                !concealed.contains(item.ownerPID) && item.bounds.width > 4
+            }
+            .map(\.bounds)
         lock.withLock {
             entries = newEntries
+            lastUnhideableItemFrames = unhideableFrames
             lastOverflowButtonFrame = chevronFrame
             lastSystemItemFrames = newEntries.values
                 .filter { $0.bundleID == menuBarAgentBundleID && (activeDisplayBounds?.intersects($0.frame) ?? true) }

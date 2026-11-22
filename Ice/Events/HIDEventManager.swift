@@ -251,8 +251,12 @@ extension HIDEventManager {
         else {
             return
         }
+        let clickLocation = MouseHelpers.locationCoreGraphics
 
         Task {
+            if await isMenuBarItem(at: clickLocation) {
+                return
+            }
             if NSEvent.modifierFlags == .control {
                 handleSecondaryContextMenu(appState: appState, screen: screen)
                 return
@@ -277,6 +281,15 @@ extension HIDEventManager {
 
             targetSection.toggle()
         }
+    }
+
+    /// Whether a click at the given location, which cached frames took for empty bar,
+    /// actually landed on a menu bar item on macOS 27.
+    private func isMenuBarItem(at location: CGPoint?) async -> Bool {
+        guard #available(macOS 27.0, *), let location else {
+            return false
+        }
+        return await MenuBarItemProvider27.hasItem(at: location)
     }
 
     // MARK: Handle Smart Rehide
@@ -359,7 +372,8 @@ extension HIDEventManager {
             guard
                 appState.settings.advanced.enableSecondaryContextMenu,
                 isMouseInsideEmptyMenuBarSpace(appState: appState, screen: screen),
-                let mouseLocation = MouseHelpers.locationAppKit
+                let mouseLocation = MouseHelpers.locationAppKit,
+                await !isMenuBarItem(at: MouseHelpers.locationCoreGraphics)
             else {
                 return
             }
@@ -411,7 +425,7 @@ extension HIDEventManager {
     private nonisolated static let replayedClickMarker: Int64 = 0x1CE_27_C1C
 
     /// Times the steps of a bridged click, which happen on both opening and closing a panel.
-    private nonisolated static let bridgeLogger = Logger(subsystem: "com.jordanbaird.Ice", category: "ClickBridge27")
+    private nonisolated static let bridgeLogger = Logger(subsystem: "com.macbar.MacBar", category: "ClickBridge27")
 
     /// Marks Ice's click that makes a display's menu bar active before an item is pressed.
     static let menuBarActivationMarker: Int64 = 0x1CE_27_BA2
@@ -1003,6 +1017,7 @@ extension HIDEventManager {
                 ItemHitTest27.Item(frame: item.bounds, ownerPID: item.ownerPID, isOnScreen: item.isOnScreen)
             }
             let systemFrames = MenuBarItemProvider27.systemItemFrames()
+                + MenuBarItemProvider27.unhideableItemFrames()
                 + [MenuBarItemProvider27.overflowButtonFrame(), CaptureIndicatorPanel27.indicatorFrame()].compactMap { $0 }
             return ItemHitTest27.isInsideItem(
                 point: mouseLocation,
@@ -1064,6 +1079,7 @@ extension HIDEventManager {
             ItemHitTest27.Item(frame: item.bounds, ownerPID: item.ownerPID, isOnScreen: item.isOnScreen)
         }
         let systemFrames = MenuBarItemProvider27.systemItemFrames()
+            + MenuBarItemProvider27.unhideableItemFrames()
             + [MenuBarItemProvider27.overflowButtonFrame(), CaptureIndicatorPanel27.indicatorFrame()].compactMap { $0 }
         return ItemHitTest27.isInsideItemsArea(
             point: mouseLocation,

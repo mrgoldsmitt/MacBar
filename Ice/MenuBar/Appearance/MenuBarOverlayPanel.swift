@@ -84,7 +84,7 @@ final class MenuBarOverlayPanel: NSPanel {
         self.appState = appState
         self.owningScreen = owningScreen
         super.init(
-            contentRect: .zero,
+            contentRect: CGRect(origin: owningScreen.frame.origin, size: CGSize(width: 1, height: 1)),
             styleMask: [.borderless, .fullSizeContentView, .nonactivatingPanel],
             backing: .buffered,
             defer: false
@@ -113,6 +113,24 @@ final class MenuBarOverlayPanel: NSPanel {
             .debounce(for: 0.1, scheduler: DispatchQueue.main)
             .sink { [weak self] _ in
                 self?.needsShow = true
+            }
+            .store(in: &c)
+
+        appState?.$activeSpace
+            .map(\.isFullscreen)
+            .removeDuplicates()
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] isFullscreen in
+                guard let self else {
+                    return
+                }
+                needsShow = false
+                updateFlags.removeAll()
+                if isFullscreen {
+                    orderOut(nil)
+                } else {
+                    needsShow = true
+                }
             }
             .store(in: &c)
 
@@ -325,16 +343,18 @@ final class MenuBarOverlayPanel: NSPanel {
             return
         }
 
-        guard let menuBarHeight = owningScreen.getMenuBarHeight() else {
+        let windows = WindowInfo.createWindows(option: .onScreen)
+        guard
+            validate(for: .showing, with: windows),
+            let menuBarWindow = WindowInfo.menuBarWindow(from: windows, for: owningScreen.displayID),
+            let newFrame = Self.overlayFrame(
+                for: owningScreen.frame,
+                menuBarFrame: menuBarWindow.bounds,
+                shadowMargin: 5
+            )
+        else {
             return
         }
-
-        let newFrame = CGRect(
-            x: owningScreen.frame.minX,
-            y: (owningScreen.frame.maxY - menuBarHeight) - 5,
-            width: owningScreen.frame.width,
-            height: menuBarHeight + 5
-        )
 
         alphaValue = 0
         setFrame(newFrame, display: false)
@@ -345,6 +365,10 @@ final class MenuBarOverlayPanel: NSPanel {
         if !appState.menuBarManager.isMenuBarHiddenBySystem {
             animator().alphaValue = 1
         }
+    }
+
+    static func overlayFrame(for screenFrame: CGRect, menuBarFrame: CGRect, shadowMargin: CGFloat = 5) -> CGRect? {
+        OverlayGeometry.overlayFrame(for: screenFrame, menuBarFrame: menuBarFrame, shadowMargin: shadowMargin)
     }
 
     override func isAccessibilityElement() -> Bool {
@@ -400,6 +424,17 @@ private final class MenuBarOverlayPanelContentView: NSView {
                         }
                     }
                     .store(in: &c)
+
+                if #available(macOS 27.0, *) {
+                    // Ice's control items stay collapsed on macOS 27, so their frames never
+                    // change. Redraw whenever the items are read again instead.
+                    appState.itemManager.$itemCache
+                        .receive(on: DispatchQueue.main)
+                        .sink { [weak self] _ in
+                            self?.needsDisplay = true
+                        }
+                        .store(in: &c)
+                }
 
                 for section in appState.menuBarManager.sections {
                     // Redraw whenever the window frame of a control item changes.
@@ -556,12 +591,22 @@ private final class MenuBarOverlayPanelContentView: NSView {
             return CGRect(x: rect.minX, y: rect.minY, width: maxX, height: rect.height)
         }()
         let trailingPathBounds: CGRect = {
-            let itemWindows = MenuBarItem.getMenuBarItemWindows(on: screen.displayID, option: .onScreen)
-            guard !itemWindows.isEmpty else {
-                return .zero
-            }
-            let totalWidth = itemWindows.reduce(into: 0) { width, item in
-                width += item.bounds.width
+            let totalWidth: CGFloat
+            if #available(macOS 27.0, *) {
+                // Items are no longer windows on macOS 27; they run from the leftmost
+                // drawn item to the edge of the display.
+                guard let leftEdge = MenuBarItemProvider27.leftEdge(for: screen.displayID) else {
+                    return .zero
+                }
+                totalWidth = CGDisplayBounds(screen.displayID).maxX - leftEdge
+            } else {
+                let itemWindows = MenuBarItem.getMenuBarItemWindows(on: screen.displayID, option: .onScreen)
+                guard !itemWindows.isEmpty else {
+                    return .zero
+                }
+                totalWidth = itemWindows.reduce(into: 0) { width, item in
+                    width += item.bounds.width
+                }
             }
             var position = rect.maxX - totalWidth
             if shouldInset {

@@ -82,7 +82,7 @@ final class EventTap {
             ready.signal()
             RunLoop.current.run()
         }
-        thread.name = "com.jordanbaird.Ice.EventTap"
+        thread.name = "com.macbar.MacBar.EventTap"
         thread.qualityOfService = .userInteractive
         thread.start()
         ready.wait()

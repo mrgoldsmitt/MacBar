@@ -73,9 +73,12 @@ final class Listener {
         Logger.default.debug("Activating listener")
 
         do {
-            if #available(macOS 26.0, *) {
+            if #available(macOS 26.0, *), CodeSigningInfo.hasTeamIdentifier {
                 try uncheckedActivateWithSameTeamRequirement()
             } else {
+                if #available(macOS 26.0, *) {
+                    Logger.default.notice("Activating listener without same-team requirement (no Team Identifier)")
+                }
                 try uncheckedActivate()
             }
         } catch {

@@ -4,7 +4,6 @@
 //
 
 import Combine
-import Ifrit
 import OSLog
 import SwiftUI
 
@@ -165,7 +164,7 @@ private final class MenuBarSearchHostingView: NSHostingView<AnyView> {
         panel: MenuBarSearchPanel
     ) {
         super.init(
-            rootView: MenuBarSearchContentView { [weak panel] in panel?.close() }
+            rootView: MenuBarSearchContentView(displayID: displayID) { [weak panel] in panel?.close() }
                 .environmentObject(appState)
                 .environmentObject(appState.itemManager)
                 .environmentObject(appState.imageCache)
@@ -192,6 +191,7 @@ private struct MenuBarSearchContentView: View {
     @EnvironmentObject var model: MenuBarSearchModel
     @FocusState private var searchFieldIsFocused: Bool
 
+    let displayID: CGDirectDisplayID
     let closePanel: () -> Void
 
     private var hasItems: Bool {
@@ -334,30 +334,12 @@ private struct MenuBarSearchContentView: View {
             model.displayedItems = searchItems.map { $0.listItem }
         } else {
             let selectableItems = searchItems.filter { $0.listItem.isSelectable }
-            let fuseResults = model.fuse.searchSync(
-                model.searchText,
-                in: selectableItems.map { $0.title }
-            )
-            let maxFuseScore = Double(fuseResults.count)
-
-            model.displayedItems = fuseResults.enumerated()
-                .map { index, result in
-                    let fuseScore = maxFuseScore - Double(index)
-                    let (listItem, title) = selectableItems[result.index]
-
-                    guard let match = bestMatch(
-                        query: model.searchText,
-                        input: title,
-                        boundaryBonus: 16,
-                        camelCaseBonus: 16
-                    ) else {
-                        return ScoredItem(listItem, fuseScore)
+            model.displayedItems = selectableItems
+                .compactMap { item -> ScoredItem? in
+                    guard let score = FuzzyMatcher.score(query: model.searchText, candidate: item.title) else {
+                        return nil
                     }
-
-                    let matchScore = Double(match.score.value)
-                    let averageScore = (matchScore + fuseScore) / 2
-
-                    return ScoredItem(listItem, averageScore)
+                    return ScoredItem(item.listItem, score)
                 }
                 .sorted { $0.score > $1.score }
                 .map { $0.listItem }
@@ -377,6 +359,10 @@ private struct MenuBarSearchContentView: View {
         closePanel()
         Task {
             try await Task.sleep(for: .milliseconds(25))
+            if #available(macOS 27.0, *), let appState = itemManager.appState {
+                await ItemClicker27.click(item: item, mouseButton: .left, iceBarDisplayID: displayID, appState: appState)
+                return
+            }
             if Bridging.isWindowOnScreen(item.windowID) {
                 try await itemManager.click(item: item, with: .left)
             } else {
@@ -391,7 +377,7 @@ private struct SettingsButton: View {
 
     var body: some View {
         Button(action: action) {
-            Image(.iceCubeStroke)
+            Image(systemName: "gearshape")
                 .resizable()
                 .aspectRatio(contentMode: .fit)
                 .foregroundStyle(.secondary)

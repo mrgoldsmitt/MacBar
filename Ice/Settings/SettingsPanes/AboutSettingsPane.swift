@@ -1,13 +1,11 @@
 //
 //  AboutSettingsPane.swift
-//  Ice
+//  MacBar
 //
 
 import SwiftUI
 
 struct AboutSettingsPane: View {
-    @EnvironmentObject var appState: AppState
-    @ObservedObject var updatesManager: UpdatesManager
     @Environment(\.openURL) private var openURL
 
     private var acknowledgementsURL: URL {
@@ -15,26 +13,9 @@ struct AboutSettingsPane: View {
         Bundle.main.url(forResource: "Acknowledgements", withExtension: "pdf")!
     }
 
-    private var contributeURL: URL {
+    private var upstreamURL: URL {
         // swiftlint:disable:next force_unwrapping
         URL(string: "https://github.com/jordanbaird/Ice")!
-    }
-
-    private var issuesURL: URL {
-        contributeURL.appendingPathComponent("issues")
-    }
-
-    private var donateURL: URL {
-        // swiftlint:disable:next force_unwrapping
-        URL(string: "https://icemenubar.app/Donate")!
-    }
-
-    private var lastUpdateCheckString: String {
-        if let date = updatesManager.lastUpdateCheckDate {
-            date.formatted(date: .abbreviated, time: .standard)
-        } else {
-            "Never"
-        }
     }
 
     var body: some View {
@@ -59,12 +40,6 @@ struct AboutSettingsPane: View {
         IceSection(spacing: 0, options: .plain) {
             appIconAndCopyrightSection
                 .layoutPriority(1)
-
-            Spacer(minLength: 0)
-                .frame(maxHeight: 20)
-
-            updatesSection
-                .layoutPriority(1)
         }
         .padding(.top, 5)
         .padding([.horizontal, .bottom], 30)
@@ -76,25 +51,33 @@ struct AboutSettingsPane: View {
     @ViewBuilder
     private var appIconAndCopyrightSection: some View {
         IceSection(options: .plain) {
-            HStack(spacing: 10) {
+            HStack(spacing: 16) {
                 if let nsImage = NSImage(named: NSImage.applicationIconName) {
                     Image(nsImage: nsImage)
                         .resizable()
                         .aspectRatio(contentMode: .fit)
-                        .frame(width: 230)
+                        .frame(width: 210)
                 }
 
-                VStack(alignment: .leading) {
-                    Text("Ice")
-                        .font(.system(size: 80))
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("MacBar")
+                        .font(.system(size: 72))
                         .foregroundStyle(.primary)
 
-                    Text("Version \(Constants.versionString)")
+                    Text("Version \(Constants.versionString) (\(Constants.buildString))")
                         .font(.system(size: 15))
                         .foregroundStyle(.secondary)
 
-                    Text(Constants.copyrightString)
+                    Text("Native macOS menu bar manager with macOS 27 support")
                         .font(.system(size: 14))
+                        .foregroundStyle(.secondary)
+
+                    Text("Based on Ice by Jordan Baird · GPL-3.0 License")
+                        .font(.system(size: 13))
+                        .foregroundStyle(.secondary.opacity(0.75))
+
+                    Text(Constants.copyrightString)
+                        .font(.system(size: 12))
                         .foregroundStyle(.secondary.opacity(0.67))
                 }
                 .fontWeight(.medium)
@@ -103,63 +86,17 @@ struct AboutSettingsPane: View {
     }
 
     @ViewBuilder
-    private var updatesSection: some View {
-        IceSection(options: .hasDividers) {
-            automaticallyCheckForUpdates
-            automaticallyDownloadUpdates
-            if updatesManager.canCheckForUpdates {
-                checkForUpdates
-            }
-        }
-        .frame(maxWidth: 600)
-    }
-
-    @ViewBuilder
-    private var automaticallyCheckForUpdates: some View {
-        Toggle(
-            "Automatically check for updates",
-            isOn: $updatesManager.automaticallyChecksForUpdates
-        )
-    }
-
-    @ViewBuilder
-    private var automaticallyDownloadUpdates: some View {
-        Toggle(
-            "Automatically download updates",
-            isOn: $updatesManager.automaticallyDownloadsUpdates
-        )
-    }
-
-    @ViewBuilder
-    private var checkForUpdates: some View {
-        HStack {
-            Button("Check for Updates") {
-                updatesManager.checkForUpdates()
-            }
-            Spacer()
-            Text("Last checked: \(lastUpdateCheckString)")
-                .font(.caption)
-        }
-    }
-
-    @ViewBuilder
     private func bottomBar(containerShape: some InsettableShape) -> some View {
         HStack {
-            Button("Quit Ice") {
+            Button("Quit MacBar") {
                 NSApp.terminate(nil)
             }
             Spacer()
             Button("Acknowledgements") {
                 NSWorkspace.shared.open(acknowledgementsURL)
             }
-            Button("Contribute") {
-                openURL(contributeURL)
-            }
-            Button("Report a Bug") {
-                openURL(issuesURL)
-            }
-            Button("Support Ice", systemImage: "heart.circle.fill") {
-                openURL(donateURL)
+            Button("Upstream Ice") {
+                openURL(upstreamURL)
             }
         }
         .padding(8)

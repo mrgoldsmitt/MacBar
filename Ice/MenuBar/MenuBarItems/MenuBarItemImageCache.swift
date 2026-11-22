@@ -61,7 +61,7 @@ final class MenuBarItemImageCache: ObservableObject {
     /// The queue is serial, so a stuck capture costs one thread rather than one
     /// per item.
     private static let captureQueue = DispatchQueue(
-        label: "com.jordanbaird.Ice.ImageCapture",
+        label: "com.macbar.MacBar.ImageCapture",
         qos: .userInitiated
     )
 
@@ -320,9 +320,7 @@ final class MenuBarItemImageCache: ObservableObject {
                     newImages[item.tag] = image
                 }
             }
-            await MainActor.run { [newImages] in
-                images.merge(newImages) { (_, new) in new }
-            }
+            await mergeImages(newImages)
             return
         }
 
@@ -351,9 +349,19 @@ final class MenuBarItemImageCache: ObservableObject {
             newImages.merge(sectionImages) { (_, new) in new }
         }
 
-        await MainActor.run { [newImages] in
-            images.merge(newImages) { (_, new) in new }
+        await mergeImages(newImages)
+    }
+
+    /// Adds the given images to the cache and drops those of items that are no longer
+    /// in the item cache.
+    @MainActor
+    private func mergeImages(_ newImages: [MenuBarItemTag: CapturedImage]) {
+        var merged = images.merging(newImages) { (_, new) in new }
+        if let items = appState?.itemManager.itemCache.managedItems, !items.isEmpty {
+            let tags = Set(items.map(\.tag))
+            merged = merged.filter { tags.contains($0.key) }
         }
+        images = merged
     }
 
     /// Updates the cache for the given sections, if necessary.

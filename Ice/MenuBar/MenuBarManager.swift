@@ -138,7 +138,9 @@ final class MenuBarManager: ObservableObject {
 
         $settingsWindow
             .removeNil()
-            .flatMap { $0.publisher(for: \.isVisible) }
+            .removeDuplicates { $0 === $1 }
+            .map { $0.publisher(for: \.isVisible) }
+            .switchToLatest()
             .discardMerge(Timer.publish(every: 5, on: .main, in: .default).autoconnect())
             .receive(on: DispatchQueue.main)
             .sink { [weak self] in
@@ -288,7 +290,7 @@ final class MenuBarManager: ObservableObject {
 
     /// Shows the secondary context menu.
     func showSecondaryContextMenu(at point: CGPoint) {
-        let menu = NSMenu(title: "Ice")
+        let menu = NSMenu(title: "MacBar")
 
         let editAppearanceItem = NSMenuItem(
             title: "Edit Menu Bar Appearance…",
@@ -301,7 +303,7 @@ final class MenuBarManager: ObservableObject {
         menu.addItem(.separator())
 
         let settingsItem = NSMenuItem(
-            title: "Ice Settings…",
+            title: "MacBar Settings…",
             action: #selector(AppDelegate.openSettingsWindow),
             keyEquivalent: ","
         )

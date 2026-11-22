@@ -3,7 +3,7 @@
 //  Ice
 //
 
-import LaunchAtLogin
+import ServiceManagement
 import SwiftUI
 
 struct GeneralSettingsPane: View {
@@ -66,7 +66,7 @@ struct GeneralSettingsPane: View {
 
     @ViewBuilder
     private var appOptions: some View {
-        LaunchAtLogin.Toggle()
+        LaunchAtLoginToggle()
     }
 
     // MARK: Ice Icon Options
@@ -81,13 +81,13 @@ struct GeneralSettingsPane: View {
 
     @ViewBuilder
     private var showIceIcon: some View {
-        Toggle("Show Ice icon", isOn: $settings.showIceIcon)
-            .annotation("Click to show hidden menu bar items. Right-click to access Ice's settings.")
+        Toggle("Show MacBar icon", isOn: $settings.showIceIcon)
+            .annotation("Click to show hidden menu bar items. Right-click to access MacBar's settings.")
     }
 
     @ViewBuilder
     private var iceIconPicker: some View {
-        let labelKey = LocalizedStringKey("Ice icon")
+        let labelKey = LocalizedStringKey("MacBar icon")
 
         IceMenu(labelKey) {
             Picker(labelKey, selection: $settings.iceIcon) {
@@ -188,7 +188,7 @@ struct GeneralSettingsPane: View {
 
     @ViewBuilder
     private var useIceBar: some View {
-        Toggle("Use Ice Bar", isOn: $settings.useIceBar)
+        Toggle("Use Floating Bar", isOn: $settings.useIceBar)
             .annotation("Show hidden menu bar items in a separate bar below the menu bar.")
     }
 
@@ -202,11 +202,11 @@ struct GeneralSettingsPane: View {
         .annotation {
             switch settings.iceBarLocation {
             case .dynamic:
-                Text("The Ice Bar's location changes based on context.")
+                Text("The Floating Bar's location changes based on context.")
             case .mousePointer:
-                Text("The Ice Bar is centered below the mouse pointer.")
+                Text("The Floating Bar is centered below the mouse pointer.")
             case .iceIcon:
-                Text("The Ice Bar is centered below the Ice icon.")
+                Text("The Floating Bar is centered below the MacBar icon.")
             }
         }
     }
@@ -293,7 +293,7 @@ struct GeneralSettingsPane: View {
                 macOS 27 fixes an item's spacing when its application creates it, so changing it \
                 would mean quitting and starting every application that has one — and an \
                 application whose item is hidden publishes nothing to relaunch, so it would keep \
-                the old spacing regardless. Ice does not offer it here.
+                the old spacing regardless. MacBar does not offer it here.
                 """,
                 spacing: 2
             )
@@ -367,5 +367,31 @@ struct GeneralSettingsPane: View {
             }
             isApplyingItemSpacingOffset = false
         }
+    }
+}
+
+private struct LaunchAtLoginToggle: View {
+    @State private var isEnabled = SMAppService.mainApp.status == .enabled
+
+    var body: some View {
+        Toggle("Launch at login", isOn: $isEnabled)
+            .onAppear {
+                isEnabled = SMAppService.mainApp.status == .enabled
+            }
+            .onChange(of: isEnabled) { _, newValue in
+                do {
+                    if newValue {
+                        if SMAppService.mainApp.status != .enabled {
+                            try SMAppService.mainApp.register()
+                        }
+                    } else {
+                        if SMAppService.mainApp.status == .enabled {
+                            try SMAppService.mainApp.unregister()
+                        }
+                    }
+                } catch {
+                    isEnabled = SMAppService.mainApp.status == .enabled
+                }
+            }
     }
 }

@@ -104,7 +104,11 @@ extension MenuBarItemService {
                     logger.warning("Session was cancelled with error \(error.localizedDescription)")
                     self.session = nil
                 }
-                session.setPeerRequirement(.isFromSameTeam())
+                if CodeSigningInfo.hasTeamIdentifier {
+                    session.setPeerRequirement(.isFromSameTeam())
+                } else {
+                    logger.notice("Connecting without same-team peer requirement (no Team Identifier)")
+                }
                 session.setTargetQueue(queue)
                 try session.activate()
                 self.session = session

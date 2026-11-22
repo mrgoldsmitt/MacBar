@@ -1,9 +1,8 @@
 //
 //  IceSlider.swift
-//  Ice
+//  MacBar
 //
 
-import CompactSlider
 import SwiftUI
 
 struct IceSlider<Value: BinaryFloatingPoint, ValueLabel: View>: View {
@@ -37,37 +36,30 @@ struct IceSlider<Value: BinaryFloatingPoint, ValueLabel: View>: View {
         self.valueLabel = Text(valueLabelKey)
     }
 
-    private var borderShape: some InsettableShape {
-        if #available(macOS 26.0, *) {
-            RoundedRectangle(cornerRadius: 6, style: .continuous)
-        } else {
-            RoundedRectangle(cornerRadius: 5, style: .circular)
-        }
+    private var doubleBinding: Binding<Double> {
+        Binding(
+            get: { Double(value) },
+            set: { value = Value($0) }
+        )
     }
 
-    private var height: CGFloat {
-        if #available(macOS 26.0, *) { 24 } else { 22 }
+    private var doubleBounds: ClosedRange<Double> {
+        Double(bounds.lowerBound)...Double(bounds.upperBound)
     }
 
     var body: some View {
-        CompactSlider(value: $value, in: bounds, step: step ?? 0)
-            .frame(height: height)
-            .overlay {
-                valueLabel
-                    .frame(height: height)
-                    .allowsHitTesting(false)
+        HStack(spacing: 10) {
+            if let step, Double(step) > 0 {
+                Slider(value: doubleBinding, in: doubleBounds, step: Double(step))
+            } else {
+                Slider(value: doubleBinding, in: doubleBounds)
             }
-            .compactSliderHandleStyle(.hidden())
-            .compactSliderOptionsByAdding(.snapToSteps)
-            .compactSliderOptionsByRemoving(.scrollWheel, .enabledHapticFeedback)
-            .compactSliderProgress { configuration in
-                Rectangle().fill(
-                    configuration.focusState.isFocused
-                        ? Color.accentColor.opacity(0.75)
-                        : Color.accentColor.opacity(0.5)
-                )
-            }
-            .clipShape(borderShape)
-            .contentShape([.interaction, .focusEffect], borderShape)
+
+            valueLabel
+                .font(.callout)
+                .monospacedDigit()
+                .foregroundStyle(.secondary)
+                .frame(minWidth: 70, alignment: .trailing)
+        }
     }
 }

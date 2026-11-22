@@ -52,6 +52,12 @@ struct MenuBarLayoutSettingsPane: View {
                 }
                 .font(.system(size: 12, weight: .medium))
                 .foregroundStyle(.secondary)
+                if #available(macOS 27.0, *), !NativeAllowListConcealer27.isAvailable, !MenuBarAssessmentAssertion27.isAvailable {
+                    Text("MacBar cannot hide items on this version of macOS: neither the system menu bar switch nor MenuBarClientCore assertions are available.")
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(.red)
+                        .multilineTextAlignment(.center)
+                }
             }
             .padding(15)
         }
@@ -76,7 +82,7 @@ struct MenuBarLayoutSettingsPane: View {
 
     @ViewBuilder
     private var cannotArrange: some View {
-        Text("Ice cannot arrange menu bar items in automatically hidden menu bars.")
+        Text("MacBar cannot arrange menu bar items in automatically hidden menu bars.")
             .font(.title3)
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
     }
@@ -143,7 +149,7 @@ private struct StuckOverflowWarning: View {
                     VStack(alignment: .leading, spacing: 3) {
                         Text("Some items are folded away on the built-in display.")
                             .font(.headline)
-                        Text("macOS stopped laying them out when Ice freed the space beside the notch, and left no control to reach them. Restarting the menu bar, below, brings them back. So does relaunching the application whose item is missing.")
+                        Text("macOS stopped laying them out when MacBar freed the space beside the notch, and left no control to reach them. Restarting the menu bar, below, brings them back. So does relaunching the application whose item is missing.")
                             .font(.system(size: 12, weight: .medium))
                             .foregroundStyle(.secondary)
                             .fixedSize(horizontal: false, vertical: true)

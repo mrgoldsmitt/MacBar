@@ -4,6 +4,7 @@
 //
 
 import CoreGraphics
+import Foundation
 import ScreenCaptureKit
 
 /// A namespace for screen capture operations.
@@ -14,6 +15,9 @@ enum ScreenCapture {
     /// Returns a Boolean value that indicates whether the app has screen
     /// capture permissions.
     static func checkPermissions() -> Bool {
+        if #available(macOS 26.0, *) {
+            return SCKPermissions.check()
+        }
         for windowID in Bridging.getMenuBarWindowList(option: [.itemsOnly, .activeSpace]) {
             guard
                 let window = WindowInfo(windowID: windowID),
@@ -90,5 +94,52 @@ enum ScreenCapture {
     ///   - option: Options that specify which parts of the window are captured.
     static func captureWindow(with windowID: CGWindowID, screenBounds: CGRect? = nil, option: CGWindowImageOption = []) -> CGImage? {
         captureWindows(with: [windowID], screenBounds: screenBounds, option: option)
+    }
+}
+
+// MARK: - SCKPermissions
+
+/// Screen recording permission checks for macOS 26 and later, where menu bar
+/// item windows no longer expose titles and the title-based heuristic in
+/// ``ScreenCapture/checkPermissions()`` can never succeed.
+@available(macOS 26.0, *)
+private enum SCKPermissions {
+    private static let lock = NSLock()
+    nonisolated(unsafe) private static var cachedResult = CGPreflightScreenCaptureAccess()
+    nonisolated(unsafe) private static var lastRefresh: Date?
+    nonisolated(unsafe) private static var isRefreshing = false
+
+    private static let refreshInterval: TimeInterval = 1
+
+    static func check() -> Bool {
+        lock.lock()
+        let result = cachedResult
+        let shouldRefresh = !isRefreshing && (lastRefresh.map { Date().timeIntervalSince($0) >= refreshInterval } ?? true)
+        if shouldRefresh {
+            isRefreshing = true
+        }
+        lock.unlock()
+
+        if shouldRefresh {
+            Task.detached(priority: .utility) {
+                let granted = await hasPermission()
+                lock.lock()
+                cachedResult = granted
+                lastRefresh = Date()
+                isRefreshing = false
+                lock.unlock()
+            }
+        }
+
+        return result
+    }
+
+    private static func hasPermission() async -> Bool {
+        do {
+            _ = try await SCShareableContent.excludingDesktopWindows(true, onScreenWindowsOnly: true)
+            return true
+        } catch {
+            return false
+        }
     }
 }

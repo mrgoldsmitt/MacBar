@@ -164,6 +164,10 @@ extension CGImage {
         // to be converted to floating point (0 to 1). Makes more sense to
         // scale the count up to match the components, rather than scale
         // the components down to match the count.
+        guard count > 0 else {
+            return nil
+        }
+
         let scaledCount = CGFloat(count * 255)
 
         var components: [CGFloat] = [
@@ -452,8 +456,9 @@ extension NSBezierPath {
         shadow.shadowBlurRadius = radius
         shadow.shadowColor = color
 
-        // swiftlint:disable:next force_cast
-        let path = copy() as! NSBezierPath
+        guard let path = copy() as? NSBezierPath else {
+            return
+        }
 
         context.saveGraphicsState()
 
@@ -517,9 +522,7 @@ extension NSScreen {
 
     /// The display identifier of the screen.
     var displayID: CGDirectDisplayID {
-        // Value and type are guaranteed here, so force casting is okay.
-        // swiftlint:disable:next force_cast
-        deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as! CGDirectDisplayID
+        (deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber)?.uint32Value ?? 0
     }
 
     /// A Boolean value that indicates whether the screen has a notch.
