@@ -46,6 +46,12 @@ enum MenuBarItemProvider27 {
         let isExpanded: Bool
     }
 
+    struct SystemItem {
+        let element: AXUIElement
+        let identifier: String
+        let frame: CGRect
+    }
+
     private struct RawItem {
         let element: AXUIElement
         let bundleID: String
@@ -74,15 +80,16 @@ enum MenuBarItemProvider27 {
     /// System item frames per display. MenuBarAgent describes the bars of both displays in its
     /// windows, unlike other applications, whose items only have frames on the active one.
     nonisolated(unsafe) private static var lastSystemFramesByDisplay = [CGDirectDisplayID: [CGRect]]()
+    /// System item elements and identifiers per display, from `MenuBarAgent`'s windows.
+    nonisolated(unsafe) private static var lastSystemItemsByDisplay = [CGDirectDisplayID: [SystemItem]]()
+    /// Measured horizontal reach left of the clock's left edge on the active display.
+    nonisolated(unsafe) private static var lastMeasuredSystemSpan: CGFloat?
     /// Every frame in those windows, per display, system items included. A bar whose menu bar is
     /// not the active one has no other account of what it draws: applications report frames for
     /// the active bar alone.
     nonisolated(unsafe) private static var lastBarFramesByDisplay = [CGDirectDisplayID: [CGRect]]()
     /// How many of each bar's entries belong to applications rather than the system group.
     nonisolated(unsafe) private static var lastApplicationEntriesByDisplay = [CGDirectDisplayID: Int]()
-    /// How far left of the clock's own left edge the other system items reach (measured on
-    /// macOS 27.0: 122 points on both displays — battery, Wi-Fi and Control Centre).
-    private static let systemItemsSpan: CGFloat = 130
     /// The leftmost item drawn on each display, from the last read while that display's
     /// menu bar was active. Hover hit-testing needs it for the display that is not active,
     /// where Accessibility reports no frames at all.
@@ -153,6 +160,14 @@ enum MenuBarItemProvider27 {
         lock.withLock { lastSystemItemFrames }
     }
 
+    /// Concurrent queue for fast live `MenuBarAgent` queries so they neither block the
+    /// Swift cooperative pool nor wait behind full-bar scans on `queue`.
+    private static let liveQueryQueue = DispatchQueue(
+        label: "com.macbar.MacBar.MenuBarItemProvider27.live",
+        qos: .userInitiated,
+        attributes: .concurrent
+    )
+
     /// Whether Accessibility finds a menu bar item at the given point, whichever process owns it.
     static func hasItem(at point: CGPoint) async -> Bool {
         await Task.detached(priority: .userInitiated) {
@@ -165,13 +180,31 @@ enum MenuBarItemProvider27 {
             else {
                 return false
             }
-            if string(element, kAXSubroleAttribute) == "AXMenuExtra" {
-                return true
+            var current: AXUIElement? = element
+            for _ in 0..<4 {
+                guard let cur = current else {
+                    break
+                }
+                if string(cur, kAXSubroleAttribute) == "AXMenuExtra" {
+                    return true
+                }
+                if
+                    let id = string(cur, kAXIdentifierAttribute),
+                    id.hasPrefix("com.apple.menuextra.") ||
+                    id == overflowIndicatorIdentifier ||
+                    id == expandedOverflowIndicatorIdentifier
+                {
+                    return true
+                }
+                if string(cur, kAXRoleAttribute) == kAXMenuBarItemRole {
+                    let parentRole = Self.element(cur, kAXParentAttribute).flatMap { string($0, kAXRoleAttribute) }
+                    if parentRole != kAXMenuBarRole {
+                        return true
+                    }
+                }
+                current = Self.element(cur, kAXParentAttribute)
             }
-            guard let parent = Self.element(element, kAXParentAttribute) else {
-                return false
-            }
-            return string(parent, kAXSubroleAttribute) == "AXMenuExtra"
+            return false
         }.value
     }
 
@@ -182,11 +215,210 @@ enum MenuBarItemProvider27 {
 
     /// The Accessibility element of the system item drawn at the given point, from the last
     /// read. Control Centre opens from a press on it without lifting concealment.
-    static func systemItem(at point: CGPoint) -> (element: AXUIElement, identifier: String)? {
+    static func systemItem(at point: CGPoint) -> (element: AXUIElement, identifier: String, frame: CGRect)? {
         lock.withLock {
-            entries.values
-                .first { $0.bundleID == menuBarAgentBundleID && $0.frame.insetBy(dx: -1, dy: -1).contains(point) }
-                .map { ($0.element, $0.identifier) }
+            if let entry = entries.values.first(where: {
+                $0.bundleID == menuBarAgentBundleID && $0.frame.insetBy(dx: -1, dy: -1).contains(point)
+            }) {
+                return (entry.element, entry.identifier, entry.frame)
+            }
+            var displayID = CGDirectDisplayID(0)
+            var matches: UInt32 = 0
+            if CGGetDisplaysWithPoint(point, 1, &displayID, &matches) == .success,
+               matches > 0,
+               let itemsOnDisplay = lastSystemItemsByDisplay[displayID],
+               let match = itemsOnDisplay.first(where: { $0.frame.insetBy(dx: -1, dy: -1).contains(point) })
+            {
+                return (match.element, match.identifier, match.frame)
+            }
+            for items in lastSystemItemsByDisplay.values {
+                if let match = items.first(where: { $0.frame.insetBy(dx: -1, dy: -1).contains(point) }) {
+                    return (match.element, match.identifier, match.frame)
+                }
+            }
+            return nil
+        }
+    }
+
+    /// Queries `MenuBarAgent` directly (off the main thread) for the system item at `point`.
+    static func liveSystemItem(at point: CGPoint) async -> (element: AXUIElement, identifier: String, frame: CGRect)? {
+        await withCheckedContinuation { continuation in
+            liveQueryQueue.async {
+                guard let agent = NSRunningApplication.runningApplications(withBundleIdentifier: menuBarAgentBundleID).first else {
+                    continuation.resume(returning: nil)
+                    return
+                }
+                let application = AXUIElementCreateApplication(agent.processIdentifier)
+                AXUIElementSetMessagingTimeout(application, 0.25)
+
+                if let bar = Self.element(application, kAXExtrasMenuBarAttribute) {
+                    for child in elements(bar, kAXChildrenAttribute) ?? [] {
+                        if string(child, kAXRoleAttribute) == kAXButtonRole {
+                            continue
+                        }
+                        let hosted = elements(child, kAXChildrenAttribute)?.first ?? child
+                        guard let itemFrame = frame(of: hosted), itemFrame.width > 1, itemFrame.height > 1 else {
+                            continue
+                        }
+                        if itemFrame.insetBy(dx: -2, dy: -2).contains(point) {
+                            let identifier = string(hosted, kAXIdentifierAttribute) ?? string(child, kAXIdentifierAttribute) ?? ""
+                            continuation.resume(returning: (hosted, identifier, itemFrame))
+                            return
+                        }
+                    }
+                }
+
+                var targetDisplay = CGDirectDisplayID(0)
+                var targetMatches: UInt32 = 0
+                let hasTargetDisplay = CGGetDisplaysWithPoint(point, 1, &targetDisplay, &targetMatches) == .success && targetMatches > 0
+                let effectiveSpan = lock.withLock { lastMeasuredSystemSpan }
+
+                for window in elements(application, kAXWindowsAttribute) ?? [] {
+                    guard let windowFrame = frame(of: window) else {
+                        continue
+                    }
+                    if hasTargetDisplay {
+                        var winDisplay = CGDirectDisplayID(0)
+                        var winMatches: UInt32 = 0
+                        CGGetDisplaysWithPoint(CGPoint(x: windowFrame.midX, y: windowFrame.minY + 1), 1, &winDisplay, &winMatches)
+                        if winMatches > 0, winDisplay != targetDisplay {
+                            continue
+                        }
+                    }
+                    let windowChildren = elements(window, kAXChildrenAttribute) ?? []
+                    var windowChildModels = [ClockBridgeZone27.WindowChild]()
+                    var hostedItems = [(element: AXUIElement, identifier: String, frame: CGRect)]()
+                    for child in windowChildren {
+                        let hosted = elements(child, kAXChildrenAttribute)?.first ?? child
+                        let itemFrame = frame(of: hosted) ?? .zero
+                        let identifier = string(hosted, kAXIdentifierAttribute) ?? string(child, kAXIdentifierAttribute) ?? ""
+                        windowChildModels.append(ClockBridgeZone27.WindowChild(identifier: identifier, frame: itemFrame))
+                        hostedItems.append((hosted, identifier, itemFrame))
+                    }
+                    let systemFrames = ClockBridgeZone27.systemItemFrames(
+                        from: windowChildModels,
+                        activeDisplaySpan: effectiveSpan
+                    )
+                    for item in hostedItems {
+                        guard
+                            item.frame.width > 1,
+                            item.frame.height > 1,
+                            item.identifier != overflowIndicatorIdentifier,
+                            item.identifier != expandedOverflowIndicatorIdentifier,
+                            item.identifier.hasPrefix("com.apple.menuextra.") || systemFrames.contains(item.frame)
+                        else {
+                            continue
+                        }
+                        if item.frame.insetBy(dx: -2, dy: -2).contains(point) {
+                            continuation.resume(returning: (item.element, item.identifier, item.frame))
+                            return
+                        }
+                    }
+                }
+
+                continuation.resume(returning: nil)
+            }
+        }
+    }
+
+    /// Queries Control Center directly (off the main thread) for an AX item matching `identifier`
+    /// or `point`, so system items like Battery, Wi-Fi, or Bluetooth can open without lifting
+    /// concealment even when MenuBarAgent's hosted element ignores `AXPress`.
+    static func liveControlCenterItem(at point: CGPoint, identifier: String?) async -> AXUIElement? {
+        await withCheckedContinuation { continuation in
+            liveQueryQueue.async {
+                guard let controlCenter = NSRunningApplication.runningApplications(
+                    withBundleIdentifier: "com.apple.controlcenter"
+                ).first else {
+                    continuation.resume(returning: nil)
+                    return
+                }
+                let application = AXUIElementCreateApplication(controlCenter.processIdentifier)
+                AXUIElementSetMessagingTimeout(application, 0.25)
+                if let bar = Self.element(application, kAXExtrasMenuBarAttribute) {
+                    for child in elements(bar, kAXChildrenAttribute) ?? [] {
+                        let hosted = elements(child, kAXChildrenAttribute)?.first ?? child
+                        let childID = string(hosted, kAXIdentifierAttribute) ?? string(child, kAXIdentifierAttribute)
+                        if let identifier, !identifier.isEmpty, childID == identifier {
+                            continuation.resume(returning: hosted)
+                            return
+                        }
+                        if let itemFrame = frame(of: hosted), itemFrame.width > 1, itemFrame.height > 1,
+                           itemFrame.insetBy(dx: -2, dy: -2).contains(point)
+                        {
+                            continuation.resume(returning: hosted)
+                            return
+                        }
+                        if let childFrame = frame(of: child), childFrame.width > 1, childFrame.height > 1,
+                           childFrame.insetBy(dx: -2, dy: -2).contains(point)
+                        {
+                            continuation.resume(returning: child)
+                            return
+                        }
+                    }
+                }
+                continuation.resume(returning: nil)
+            }
+        }
+    }
+
+    /// Queries `MenuBarAgent` directly (off the main thread) for the live frame of the system
+    /// item with `identifier` on `displayID`.
+    static func liveSystemItemFrame(identifier: String, on displayID: CGDirectDisplayID?) async -> CGRect? {
+        guard !identifier.isEmpty else {
+            return nil
+        }
+        return await withCheckedContinuation { continuation in
+            liveQueryQueue.async {
+                guard let agent = NSRunningApplication.runningApplications(withBundleIdentifier: menuBarAgentBundleID).first else {
+                    continuation.resume(returning: nil)
+                    return
+                }
+                let application = AXUIElementCreateApplication(agent.processIdentifier)
+                AXUIElementSetMessagingTimeout(application, 0.25)
+
+                if let displayID {
+                    for window in elements(application, kAXWindowsAttribute) ?? [] {
+                        guard let windowFrame = frame(of: window) else {
+                            continue
+                        }
+                        var winDisplay = CGDirectDisplayID(0)
+                        var winMatches: UInt32 = 0
+                        CGGetDisplaysWithPoint(CGPoint(x: windowFrame.midX, y: windowFrame.minY + 1), 1, &winDisplay, &winMatches)
+                        guard winMatches > 0, winDisplay == displayID else {
+                            continue
+                        }
+                        for child in elements(window, kAXChildrenAttribute) ?? [] {
+                            let hosted = elements(child, kAXChildrenAttribute)?.first ?? child
+                            let childID = string(hosted, kAXIdentifierAttribute) ?? string(child, kAXIdentifierAttribute)
+                            if childID == identifier, let f = frame(of: hosted), f.width > 1, f.height > 1 {
+                                continuation.resume(returning: f)
+                                return
+                            }
+                        }
+                    }
+                }
+
+                if let bar = Self.element(application, kAXExtrasMenuBarAttribute) {
+                    let displayBounds = displayID.map(CGDisplayBounds)
+                    for child in elements(bar, kAXChildrenAttribute) ?? [] {
+                        let hosted = elements(child, kAXChildrenAttribute)?.first ?? child
+                        let childID = string(hosted, kAXIdentifierAttribute) ?? string(child, kAXIdentifierAttribute)
+                        if
+                            childID == identifier,
+                            let f = frame(of: hosted),
+                            f.width > 1,
+                            f.height > 1,
+                            displayBounds?.intersects(f) ?? true
+                        {
+                            continuation.resume(returning: f)
+                            return
+                        }
+                    }
+                }
+
+                continuation.resume(returning: nil)
+            }
         }
     }
 
@@ -367,16 +599,18 @@ enum MenuBarItemProvider27 {
             if bundleID == menuBarAgentBundleID {
                 // MenuBarAgent's window on the display whose bar is not active holds every item
                 // drawn there, not only the system ones, so taking them all made Ice treat any
-                // click as a click on a system item and lift concealment for it. The system
-                // items are the rightmost group, and the clock is the widest of them: keep the
-                // items within the span they occupy (measured on macOS 27.0: 237 points from the
-                // leftmost of them to the clock's right edge).
-                // Each window is one display's bar, and what it lists belongs to that bar: an
-                // item's frame where it is drawn, and an entry with no geometry on the other
-                // display. So the windows are read one at a time, and a display is taken from the
-                // window's own frame — an entry with no geometry would otherwise be filed under
-                // whichever display happens to contain the origin.
+                // click as a click on a system item and lift concealment for it. Identify system
+                // items by `com.apple.menuextra.*` when available, or fall back to the measured
+                // span left of the clock on the active display.
+                let activeSystemFrames = rawItems
+                    .filter { $0.bundleID == menuBarAgentBundleID && (activeDisplayBounds?.intersects($0.frame) ?? true) }
+                    .map(\.frame)
+                let measuredSpan = ClockBridgeZone27.measuredSystemSpan(systemItemFrames: activeSystemFrames)
+                let effectiveSpan = measuredSpan ?? lock.withLock { lastMeasuredSystemSpan }
+
                 var framesByDisplay = [CGDirectDisplayID: [CGRect]]()
+                var systemFramesByDisplay = [CGDirectDisplayID: [CGRect]]()
+                var systemItemsByDisplay = [CGDirectDisplayID: [SystemItem]]()
                 var entriesByDisplay = [CGDirectDisplayID: Int]()
                 var indicatorsByDisplay = [CGDirectDisplayID: OverflowIndicator]()
                 for window in elements(application, kAXWindowsAttribute) ?? [] {
@@ -392,52 +626,76 @@ enum MenuBarItemProvider27 {
                     let windowChildren = elements(window, kAXChildrenAttribute) ?? []
                     // An entry the bar lists without geometry answers no position at all, so a
                     // missing frame is kept as an empty one: the entry is what counts.
-                    let childFrames = windowChildren.map { child in
-                        frame(of: elements(child, kAXChildrenAttribute)?.first ?? child) ?? .zero
-                    }
-                    for indicator in windowChildren {
-                        let identifier = string(indicator, kAXIdentifierAttribute)
-                        guard
-                            identifier == overflowIndicatorIdentifier || identifier == expandedOverflowIndicatorIdentifier,
-                            let indicatorFrame = frame(of: indicator)
-                        else {
-                            continue
+                    var childFrames = [CGRect]()
+                    var windowChildModels = [ClockBridgeZone27.WindowChild]()
+                    var hostedItems = [(element: AXUIElement, identifier: String, frame: CGRect)]()
+                    childFrames.reserveCapacity(windowChildren.count)
+                    windowChildModels.reserveCapacity(windowChildren.count)
+                    hostedItems.reserveCapacity(windowChildren.count)
+
+                    for child in windowChildren {
+                        let hosted = elements(child, kAXChildrenAttribute)?.first ?? child
+                        let childFrame = frame(of: hosted) ?? .zero
+                        let identifier = string(hosted, kAXIdentifierAttribute) ?? string(child, kAXIdentifierAttribute) ?? ""
+                        childFrames.append(childFrame)
+                        windowChildModels.append(ClockBridgeZone27.WindowChild(identifier: identifier, frame: childFrame))
+                        hostedItems.append((hosted, identifier, childFrame))
+
+                        let childIdentifier = string(child, kAXIdentifierAttribute)
+                        if
+                            childIdentifier == overflowIndicatorIdentifier || childIdentifier == expandedOverflowIndicatorIdentifier,
+                            let indicatorFrame = frame(of: child)
+                        {
+                            indicatorsByDisplay[display] = OverflowIndicator(
+                                element: child,
+                                frame: indicatorFrame,
+                                isExpanded: childIdentifier == expandedOverflowIndicatorIdentifier
+                            )
                         }
-                        indicatorsByDisplay[display] = OverflowIndicator(
-                            element: indicator,
-                            frame: indicatorFrame,
-                            isExpanded: identifier == expandedOverflowIndicatorIdentifier
-                        )
                     }
+
                     // Added to, not replaced: one window per display is what macOS 27.0 has, but
                     // a second one would otherwise take the first one's entries away with it.
                     framesByDisplay[display, default: []].append(contentsOf: childFrames)
+
+                    let systemFrames = ClockBridgeZone27.systemItemFrames(
+                        from: windowChildModels,
+                        activeDisplaySpan: effectiveSpan
+                    )
+                    if !systemFrames.isEmpty {
+                        systemFramesByDisplay[display, default: []].append(contentsOf: systemFrames)
+                        let matchedItems = hostedItems.compactMap { item -> SystemItem? in
+                            guard
+                                item.frame.width > 1,
+                                item.identifier != overflowIndicatorIdentifier,
+                                item.identifier != expandedOverflowIndicatorIdentifier,
+                                item.identifier.hasPrefix("com.apple.menuextra.") || systemFrames.contains(item.frame)
+                            else {
+                                return nil
+                            }
+                            return SystemItem(element: item.element, identifier: item.identifier, frame: item.frame)
+                        }
+                        systemItemsByDisplay[display, default: []].append(contentsOf: matchedItems)
+                    }
+
                     guard let clock = childFrames.max(by: { $0.width < $1.width }), clock.width > 80 else {
                         continue
                     }
-                    let systemFrames = childFrames.filter { $0.width > 1 && $0.minX >= clock.minX - systemItemsSpan }
                     entriesByDisplay[display, default: 0] += StuckOverflow27.applicationEntryCount(
                         childFrames: childFrames,
                         systemItemFrames: systemFrames
                     )
                 }
-                let perDisplay = framesByDisplay.compactMapValues { frames -> [CGRect]? in
-                    guard let clock = frames.max(by: { $0.width < $1.width }), clock.width > 80 else {
-                        return nil
-                    }
-                    return frames.filter { $0.width > 1 && $0.minX >= clock.minX - systemItemsSpan }
-                }
                 lock.withLock {
-                    lastSystemFramesByDisplay = perDisplay
+                    lastSystemFramesByDisplay = systemFramesByDisplay
+                    lastSystemItemsByDisplay = systemItemsByDisplay
                     lastBarFramesByDisplay = framesByDisplay
                     lastApplicationEntriesByDisplay = entriesByDisplay
                     lastOverflowIndicators = indicatorsByDisplay
-                }
-                let systemFrames = rawItems
-                    .filter { $0.bundleID == menuBarAgentBundleID && (activeDisplayBounds?.intersects($0.frame) ?? true) }
-                    .map(\.frame)
-                lock.withLock {
-                    lastSystemItemFrames = systemFrames
+                    if let measuredSpan {
+                        lastMeasuredSystemSpan = measuredSpan
+                    }
+                    lastSystemItemFrames = activeSystemFrames
                     lastOverflowButtonFrame = chevronFrame
                 }
             }

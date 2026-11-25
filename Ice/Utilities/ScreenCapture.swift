@@ -10,13 +10,49 @@ import ScreenCaptureKit
 /// A namespace for screen capture operations.
 enum ScreenCapture {
 
+    // MARK: Permission State
+
+    private static let stateLock = NSLock()
+    nonisolated(unsafe) private static var cachedPermissionResult: Bool?
+    nonisolated(unsafe) private static var captureAccessDeclined = false
+
+    /// Records that screen recording access was declined by the user or system
+    /// during the current session so background capture paths stop prompting.
+    static func markCapturePermissionDeclined() {
+        stateLock.lock()
+        captureAccessDeclined = true
+        cachedPermissionResult = false
+        stateLock.unlock()
+    }
+
+    /// Clears the cached permission status and any session decline suppression.
+    static func resetCapturePermissionState() {
+        stateLock.lock()
+        captureAccessDeclined = false
+        cachedPermissionResult = nil
+        stateLock.unlock()
+    }
+
+    private static func isCaptureAccessDeclined() -> Bool {
+        stateLock.lock()
+        let declined = captureAccessDeclined
+        stateLock.unlock()
+        return declined
+    }
+
     // MARK: Permissions
 
     /// Returns a Boolean value that indicates whether the app has screen
-    /// capture permissions.
+    /// capture permissions without triggering a system prompt.
     static func checkPermissions() -> Bool {
+        if isCaptureAccessDeclined() {
+            return false
+        }
         if #available(macOS 26.0, *) {
-            return SCKPermissions.check()
+            if CGPreflightScreenCaptureAccess() {
+                return true
+            }
+            return hasOtherProcessWindowTitle()
         }
         for windowID in Bridging.getMenuBarWindowList(option: [.itemsOnly, .activeSpace]) {
             guard
@@ -32,6 +68,38 @@ enum ScreenCapture {
         return CGPreflightScreenCaptureAccess()
     }
 
+    /// Returns whether another non-system process exposes a window title via the
+    /// Window Server, which only succeeds once screen capture access is granted
+    /// and never triggers a permission dialog.
+    private static func hasOtherProcessWindowTitle() -> Bool {
+        let ownPID = ProcessInfo.processInfo.processIdentifier
+        let normalLayer = Int(CGWindowLevelForKey(.normalWindow))
+        let excludedOwners: Set<String> = ["Window Server", "WindowManager", "Dock"]
+        guard let windowList = CGWindowListCopyWindowInfo(
+            [.optionOnScreenOnly, .excludeDesktopElements],
+            kCGNullWindowID
+        ) as? [[CFString: Any]] else {
+            return false
+        }
+        for info in windowList {
+            guard
+                let ownerPID = info[kCGWindowOwnerPID] as? pid_t,
+                ownerPID != ownPID,
+                let layer = info[kCGWindowLayer] as? Int,
+                layer == normalLayer,
+                let title = info[kCGWindowName] as? String,
+                !title.isEmpty
+            else {
+                continue
+            }
+            if let ownerName = info[kCGWindowOwnerName] as? String, excludedOwners.contains(ownerName) {
+                continue
+            }
+            return true
+        }
+        return false
+    }
+
     /// Returns a Boolean value that indicates whether the app has screen
     /// capture permissions.
     ///
@@ -39,24 +107,39 @@ enum ScreenCapture {
     /// calls. Pass `true` to the `reset` parameter to replace the cached
     /// result with a newly computed value.
     static func cachedCheckPermissions(reset: Bool = false) -> Bool {
-        enum Context {
-            static var cachedResult: Bool?
+        stateLock.lock()
+        if captureAccessDeclined {
+            stateLock.unlock()
+            return false
         }
-        if !reset, let result = Context.cachedResult {
+        if !reset, let result = cachedPermissionResult {
+            stateLock.unlock()
             return result
         }
+        stateLock.unlock()
+
         let result = checkPermissions()
-        Context.cachedResult = result
+
+        stateLock.lock()
+        if captureAccessDeclined {
+            stateLock.unlock()
+            return false
+        }
+        cachedPermissionResult = result
+        stateLock.unlock()
         return result
     }
 
     /// Requests screen capture permissions.
     static func requestPermissions() {
+        resetCapturePermissionState()
+        guard !checkPermissions() else {
+            return
+        }
         if #available(macOS 15.0, *) {
             // CGRequestScreenCaptureAccess() is broken on macOS 15. We can
             // try accessing SCShareableContent to trigger a request if the
             // user doesn't have permissions.
-            // TODO: Find out if we still need this as of macOS 26.
             SCShareableContent.getWithCompletionHandler { _, _ in }
         } else {
             CGRequestScreenCaptureAccess()
@@ -76,7 +159,10 @@ enum ScreenCapture {
     ///     Pass `nil` to capture the minimum rectangle that encloses the windows.
     ///   - option: Options that specify which parts of the windows are captured.
     static func captureWindows(with windowIDs: [CGWindowID], screenBounds: CGRect? = nil, option: CGWindowImageOption = []) -> CGImage? {
-        guard let array = Bridging.createCGWindowArray(with: windowIDs) else {
+        guard
+            cachedCheckPermissions(),
+            let array = Bridging.createCGWindowArray(with: windowIDs)
+        else {
             return nil
         }
         let bounds = screenBounds ?? .null
@@ -94,52 +180,5 @@ enum ScreenCapture {
     ///   - option: Options that specify which parts of the window are captured.
     static func captureWindow(with windowID: CGWindowID, screenBounds: CGRect? = nil, option: CGWindowImageOption = []) -> CGImage? {
         captureWindows(with: [windowID], screenBounds: screenBounds, option: option)
-    }
-}
-
-// MARK: - SCKPermissions
-
-/// Screen recording permission checks for macOS 26 and later, where menu bar
-/// item windows no longer expose titles and the title-based heuristic in
-/// ``ScreenCapture/checkPermissions()`` can never succeed.
-@available(macOS 26.0, *)
-private enum SCKPermissions {
-    private static let lock = NSLock()
-    nonisolated(unsafe) private static var cachedResult = CGPreflightScreenCaptureAccess()
-    nonisolated(unsafe) private static var lastRefresh: Date?
-    nonisolated(unsafe) private static var isRefreshing = false
-
-    private static let refreshInterval: TimeInterval = 1
-
-    static func check() -> Bool {
-        lock.lock()
-        let result = cachedResult
-        let shouldRefresh = !isRefreshing && (lastRefresh.map { Date().timeIntervalSince($0) >= refreshInterval } ?? true)
-        if shouldRefresh {
-            isRefreshing = true
-        }
-        lock.unlock()
-
-        if shouldRefresh {
-            Task.detached(priority: .utility) {
-                let granted = await hasPermission()
-                lock.lock()
-                cachedResult = granted
-                lastRefresh = Date()
-                isRefreshing = false
-                lock.unlock()
-            }
-        }
-
-        return result
-    }
-
-    private static func hasPermission() async -> Bool {
-        do {
-            _ = try await SCShareableContent.excludingDesktopWindows(true, onScreenWindowsOnly: true)
-            return true
-        } catch {
-            return false
-        }
     }
 }

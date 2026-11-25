@@ -58,8 +58,9 @@ enum ItemClick27 {
     /// The level the panels stand at: the menu bar's own level and above.
     private static let panelLayer = 20
 
-    /// Taller than the menu bar's own windows, so the bar never passes for a panel.
-    private static let panelHeight: CGFloat = 150
+    /// Taller than the menu bar's own windows, so the bar never passes for a panel while still
+    /// recognizing compact popovers such as Battery, Bluetooth, Wi-Fi, and Sound.
+    private static let panelHeight: CGFloat = 60
 
     static func interfaceIsOpen(windowOwners: [(number: Int, ownerPID: Int32)], ownerPID: Int32, baseline: Set<Int>) -> Bool {
         windowOwners.contains { $0.ownerPID == ownerPID && !baseline.contains($0.number) }

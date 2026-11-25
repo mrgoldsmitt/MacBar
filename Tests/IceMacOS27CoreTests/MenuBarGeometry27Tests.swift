@@ -78,6 +78,74 @@ struct ClockBridgeZone27Tests {
     func notConcealing() {
         #expect(!ClockBridgeZone27.shouldBridge(click: CGPoint(x: 1840, y: 15), systemItemFrames: [clock], isConcealing: false))
     }
+
+    @Test("MenuExtra identifiers cover wide layouts even with Spotlight between Control Center and Clock")
+    func wideLayoutWithSpotlightBetween() {
+        // Simulates German clock ("Mi. 25. Nov. 20:31"), Spotlight (`com.apple.campo`), Control Center,
+        // Wi-Fi, and Battery sitting 268 pt from the right edge of a 3440-pt display (x=-1200 max).
+        let battery = CGRect(x: -1468, y: -727, width: 34, height: 30)
+        let wifi = CGRect(x: -1434, y: -727, width: 30, height: 30)
+        let controlCenter = CGRect(x: -1404, y: -727, width: 30, height: 30)
+        let spotlight = CGRect(x: -1374, y: -727, width: 34, height: 30)
+        let germanClock = CGRect(x: -1340, y: -727, width: 136, height: 30)
+        let thirdParty = CGRect(x: -1520, y: -727, width: 32, height: 30)
+
+        let children = [
+            ClockBridgeZone27.WindowChild(identifier: "Item-0", frame: thirdParty),
+            ClockBridgeZone27.WindowChild(identifier: "com.apple.menuextra.battery", frame: battery),
+            ClockBridgeZone27.WindowChild(identifier: "com.apple.menuextra.wifi", frame: wifi),
+            ClockBridgeZone27.WindowChild(identifier: "com.apple.menuextra.controlcenter", frame: controlCenter),
+            ClockBridgeZone27.WindowChild(identifier: "Item-0", frame: spotlight),
+            ClockBridgeZone27.WindowChild(identifier: "com.apple.menuextra.clock", frame: germanClock),
+        ]
+
+        let frames = ClockBridgeZone27.systemItemFrames(from: children, activeDisplaySpan: nil)
+        #expect(frames == [battery, wifi, controlCenter, germanClock])
+        #expect(ClockBridgeZone27.shouldBridge(click: CGPoint(x: battery.midX, y: battery.midY), systemItemFrames: frames, isConcealing: true))
+    }
+
+    @Test("Fallback span identification uses measured active span and excludes non-system frames")
+    func fallbackSpanWithoutIdentifiers() {
+        let battery = CGRect(x: -1468, y: -727, width: 34, height: 30)
+        let wifi = CGRect(x: -1434, y: -727, width: 30, height: 30)
+        let controlCenter = CGRect(x: -1404, y: -727, width: 30, height: 30)
+        let germanClock = CGRect(x: -1340, y: -727, width: 136, height: 30)
+        let thirdPartyInSpan = CGRect(x: -1480, y: -727, width: 12, height: 30)
+
+        let measuredSpan = ClockBridgeZone27.measuredSystemSpan(systemItemFrames: [battery, wifi, controlCenter, germanClock])
+        #expect(measuredSpan == 140)
+
+        let children = [
+            ClockBridgeZone27.WindowChild(identifier: "", frame: thirdPartyInSpan),
+            ClockBridgeZone27.WindowChild(identifier: "", frame: battery),
+            ClockBridgeZone27.WindowChild(identifier: "", frame: wifi),
+            ClockBridgeZone27.WindowChild(identifier: "", frame: controlCenter),
+            ClockBridgeZone27.WindowChild(identifier: "", frame: germanClock),
+        ]
+
+        let frames = ClockBridgeZone27.systemItemFrames(
+            from: children,
+            activeDisplaySpan: measuredSpan,
+            nonSystemFrames: [thirdPartyInSpan]
+        )
+        #expect(frames == [battery, wifi, controlCenter, germanClock])
+    }
+
+    @Test("Post-lift click target tracks live frame when item shifts left and falls back to original click when nil")
+    func postLiftClickTarget() {
+        let original = CGPoint(x: -1451, y: -712)
+        let shiftedFrame = CGRect(x: -1530, y: -727, width: 34, height: 30)
+        #expect(ClockBridgeZone27.clickTarget(originalClick: original, liveItemFrame: shiftedFrame) == CGPoint(x: -1513, y: -712))
+        #expect(ClockBridgeZone27.clickTarget(originalClick: original, liveItemFrame: nil) == original)
+    }
+
+    @Test("Control Center is never permanently press-ignored while other items require two consecutive failures")
+    func pressIgnoredTracking() {
+        #expect(!ClockBridgeZone27.shouldTrackPressIgnored(identifier: "com.apple.menuextra.controlcenter", consecutiveFailures: 1))
+        #expect(!ClockBridgeZone27.shouldTrackPressIgnored(identifier: "com.apple.menuextra.controlcenter", consecutiveFailures: 5))
+        #expect(!ClockBridgeZone27.shouldTrackPressIgnored(identifier: "com.apple.menuextra.custom", consecutiveFailures: 1))
+        #expect(ClockBridgeZone27.shouldTrackPressIgnored(identifier: "com.apple.menuextra.custom", consecutiveFailures: 2))
+    }
 }
 
 @Suite("ItemHitTest27")

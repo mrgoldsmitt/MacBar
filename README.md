@@ -10,18 +10,23 @@ MacBar lets you organize, hide, search, and style your macOS menu bar items clea
 
 ## Improvements over upstream `jordanbaird/Ice`
 
-- **Full macOS 27 (`MenuBarAgent`) support**: Native `trackedApplications` hiding with crash-safe auto-restore, Assessment Mode fallback, Accessibility item discovery, helper-app bundle resolution, click bridge on a dedicated thread, notch overflow handling, and 45s launch grace window.
+- **Full macOS 27 (`MenuBarAgent`) support**: Native `trackedApplications` hiding (with Full Disk Access onboarding so Battery, Wi-Fi, Bluetooth, and Control Center clicks never expand hidden items), crash-safe auto-restore, hardened Assessment Mode fallback with zero-lift `AXPress` click bridging on a dedicated thread, Accessibility item discovery, helper-app bundle resolution, notch overflow handling, and 45s launch grace window.
 - **macOS 26/27 stability & crash fixes**:
-  - Screen Recording permission detection via `ScreenCaptureKit` (`SCShareableContent`) instead of the broken window-title heuristic.
+  - Non-prompting Screen Recording permission detection (`CGPreflightScreenCaptureAccess()` + window-title metadata check + session decline circuit-breaker) that never triggers repeating TCC/ScreenCaptureKit popups.
+  - Reliable click hit-testing across multi-display Control Center / system item frames and safe CoreFoundation pre-checks before reading `group.com.apple.controlcenter` preferences.
   - Safe `NSScreen.displayID`, `NSBezierPath.drawShadow`, and `CGImage.averageColor` guards against nil/zero-pixel crashes.
-  - Ad-hoc XPC support in `MenuBarItemService` so locally signed builds work without a Team Identifier.
+  - Ad-hoc and local-certificate XPC support in `MenuBarItemService` so locally signed builds work without a Team Identifier.
   - Search Panel clicks on hidden items routed via `ItemClicker27` on macOS 27.
   - Wallpaper & split-shape overlay appearance support for `WindowManager` on macOS 27, fullscreen hiding, screen-parameter panel cleanup, and multi-display bounds validation.
   - Window/hotkey observer leak fixes and stale item image pruning.
-- **Zero external dependencies & clean local build**: Replaced external SwiftPM packages (`AXSwift`, `LaunchAtLogin`, `CompactSlider`, `Semaphore`, `Ifrit`, `Sparkle`) with native Apple/Swift implementations so MacBar builds completely offline, rebranded as `MacBar` (`com.macbar.MacBar`) with a custom native app icon and DMG packager.
+- **Zero external dependencies & signed DMG packaging**: Replaced external SwiftPM packages (`AXSwift`, `LaunchAtLogin`, `CompactSlider`, `Semaphore`, `Ifrit`, `Sparkle`) with native Apple/Swift implementations so MacBar builds completely offline, rebranded as `MacBar` (`com.macbar.MacBar`) with a custom native app icon, local Code Signing certificate helper (`Scripts/create_signing_cert.sh`), and signed DMG packager (`Scripts/build_dmg.sh`).
 
 ## Building & Packaging
 
+- **Create a persistent local Code Signing certificate (once)**:
+  ```sh
+  ./Scripts/create_signing_cert.sh
+  ```
 - **Run unit tests**:
   ```sh
   swift test
@@ -30,7 +35,7 @@ MacBar lets you organize, hide, search, and style your macOS menu bar items clea
   ```sh
   ./Scripts/install.sh
   ```
-- **Build release `.app` and `dist/MacBar.dmg`**:
+- **Build signed release `.app` and `dist/MacBar.dmg`**:
   ```sh
   ./Scripts/build_dmg.sh
   ```

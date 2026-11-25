@@ -169,8 +169,10 @@ final class CaptureIndicatorPanel27: NSPanel {
             contentView = hostingView
             self.hostingView = hostingView
         }
+        let cgBarY = CGDisplayBounds(screen.displayID).minY
+        let cgFrame = CGRect(x: frame.minX, y: cgBarY, width: frame.width, height: frame.height)
         setFrame(frame, display: true)
-        Self.setIndicatorFrame(frame)
+        Self.setIndicatorFrame(cgFrame)
         if !isVisible {
             orderFrontRegardless()
         }

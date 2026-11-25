@@ -43,6 +43,14 @@ final class MenuBarSearchModel: ObservableObject {
     }
 
     private func updateAverageColorInfo(for screen: NSScreen) {
+        if #available(macOS 27.0, *) {
+            let info = MenuBarAverageColorInfo(color: IceBarColorManager.flatColor27(), source: .menuBarWindow)
+            if averageColorInfo != info {
+                averageColorInfo = info
+            }
+            return
+        }
+
         let windows = WindowInfo.createWindows(option: .onScreen)
         let displayID = screen.displayID
 

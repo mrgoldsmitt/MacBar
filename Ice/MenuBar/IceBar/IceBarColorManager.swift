@@ -23,6 +23,19 @@ final class IceBarColorManager: ObservableObject {
     private func configureCancellables() {
         var c = Set<AnyCancellable>()
 
+        if #available(macOS 27.0, *) {
+            setColor27()
+            DistributedNotificationCenter.default()
+                .publisher(for: DistributedNotificationCenter.interfaceThemeChangedNotification)
+                .receive(on: DispatchQueue.main)
+                .sink { [weak self] _ in
+                    self?.setColor27()
+                }
+                .store(in: &c)
+            cancellables = c
+            return
+        }
+
         if let iceBarPanel {
             iceBarPanel.publisher(for: \.screen)
                 .receive(on: DispatchQueue.main)
@@ -110,6 +123,9 @@ final class IceBarColorManager: ObservableObject {
     }
 
     private func updateWindowImage(for screen: NSScreen) {
+        if #available(macOS 27.0, *) {
+            return
+        }
         let windows = WindowInfo.createWindows(option: .onScreen)
         let displayID = screen.displayID
 
@@ -158,6 +174,10 @@ final class IceBarColorManager: ObservableObject {
     }
 
     func updateAllProperties(with frame: CGRect, screen: NSScreen) {
+        if #available(macOS 27.0, *) {
+            setColor27()
+            return
+        }
         updateWindowImage(for: screen)
         updateColorInfo(with: frame, screen: screen)
     }

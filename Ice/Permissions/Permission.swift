@@ -107,6 +107,11 @@ class Permission: ObservableObject, Identifiable {
         }
     }
 
+    /// Re-evaluates whether the app currently has this permission.
+    func recheck() {
+        hasPermission = check()
+    }
+
     /// Stops running the permission check.
     func stopCheck() {
         timerCancellable?.cancel()
@@ -156,6 +161,29 @@ final class ScreenRecordingPermission: Permission {
             request: {
                 ScreenCapture.requestPermissions()
             }
+        )
+    }
+}
+
+// MARK: - FullDiskAccessPermission
+
+@available(macOS 27.0, *)
+final class FullDiskAccessPermission: Permission {
+    init() {
+        super.init(
+            title: "Full Disk Access",
+            details: [
+                "Hide menu bar items natively via macOS 27's Allow in the Menu Bar switch.",
+                "Keep clicks on Battery, Wi-Fi, Bluetooth, and Control Center smooth without expanding hidden items.",
+            ],
+            isRequired: false,
+            settingsURL: URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles"),
+            check: {
+                MainActor.assumeIsolated {
+                    NativeAllowListConcealer27.isAvailable
+                }
+            },
+            request: { }
         )
     }
 }

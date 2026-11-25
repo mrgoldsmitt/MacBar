@@ -61,6 +61,7 @@ final class Concealer27: ObservableObject {
     private var observers = [NSObjectProtocol]()
     private var applyTask: Task<Void, Never>?
     private var suspendedUntil: ContinuousClock.Instant?
+    private var suspensionTask: Task<Void, Never>?
 
     /// When concealment last changed, which is when the bar last started moving.
     private var lastChangeAt = ContinuousClock.now
@@ -92,6 +93,13 @@ final class Concealer27: ObservableObject {
     /// them on its own. Sections come from the saved layout on 27, so once that layout has been
     /// read off the bar the dividers have nothing left to mark.
     @Published private(set) var dividersMayStandAside = false
+
+    /// Whether macOS's native "Allow in the Menu Bar" switch can currently be read.
+    @Published private(set) var isNativeSwitchAvailable = false
+
+    /// Whether the user asked for the native switch, but MacBar had to fall back to
+    /// assessment mode because reading Control Center's preferences was denied.
+    @Published private(set) var isUsingAssessmentFallback = false
     private var cancellables = Set<AnyCancellable>()
     private var runningApplicationsObservation: NSKeyValueObservation?
 
@@ -164,6 +172,7 @@ final class Concealer27: ObservableObject {
     func performSetup(with appState: AppState) {
         self.appState = appState
         nativeIsAvailable = NativeAllowListConcealer27.isAvailable
+        isNativeSwitchAvailable = nativeIsAvailable
         if !nativeIsAvailable {
             logger.notice("The native Allow in the Menu Bar switch cannot be read, so assessment mode is used")
         }
@@ -193,6 +202,23 @@ final class Concealer27: ObservableObject {
             MainActor.assumeIsolated {
                 NotchGeometry27.refresh()
                 self?.update()
+            }
+        })
+        observers.append(NotificationCenter.default.addObserver(
+            forName: NSApplication.didBecomeActiveNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self, weak appState] _ in
+            MainActor.assumeIsolated {
+                guard
+                    let self,
+                    let appState,
+                    appState.settings.advanced.macOS27HidingMethod == .nativeAllowList,
+                    self.isUsingAssessmentFallback
+                else {
+                    return
+                }
+                self.recheckNativeAvailability()
             }
         })
         // `didLaunchApplicationNotification` arrives only once an application has finished
@@ -257,6 +283,18 @@ final class Concealer27: ObservableObject {
             }
             .store(in: &cancellables)
         appState.captureIndicatorPanel27.performSetup(watcher: appState.captureWatcher27, concealer: self)
+        appState.permissions.fullDiskAccess.$hasPermission
+            .removeDuplicates()
+            .dropFirst()
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] hasPermission in
+                MainActor.assumeIsolated {
+                    if hasPermission {
+                        self?.recheckNativeAvailability()
+                    }
+                }
+            }
+            .store(in: &cancellables)
         // Changing the method releases the old one in full before the new one is applied (see
         // `update`). Received on the main queue, so the setting already holds the new value.
         appState.settings.advanced.$macOS27HidingMethod
@@ -278,6 +316,18 @@ final class Concealer27: ObservableObject {
         update()
     }
 
+    /// Re-checks whether macOS's native "Allow in the Menu Bar" preference can be read,
+    /// switching back from the assessment-mode fallback if access is now permitted.
+    func recheckNativeAvailability() {
+        appState?.permissions.fullDiskAccess.recheck()
+        nativeIsAvailable = NativeAllowListConcealer27.isAvailable
+        if nativeIsAvailable {
+            nativeFailed = false
+        }
+        isNativeSwitchAvailable = nativeIsAvailable && !nativeFailed
+        update()
+    }
+
     /// Derives what to conceal from Ice's sections and applies it.
     func update() {
         guard let appState else {
@@ -288,7 +338,9 @@ final class Concealer27: ObservableObject {
             return
         }
         self.backend = backend
-        let mayStandAside = backend == .native && Defaults.bool(forKey: .macOS27LayoutSeeded)
+        isNativeSwitchAvailable = nativeIsAvailable && !nativeFailed
+        isUsingAssessmentFallback = (appState.settings.advanced.macOS27HidingMethod == .nativeAllowList) && (backend == .assessment)
+        let mayStandAside = Defaults.bool(forKey: .macOS27LayoutSeeded)
         if dividersMayStandAside != mayStandAside {
             dividersMayStandAside = mayStandAside
         }
@@ -607,6 +659,8 @@ final class Concealer27: ObservableObject {
         guard needsClickLift else {
             return
         }
+        suspensionTask?.cancel()
+        suspensionTask = nil
         lastChangeAt = .now
         suspendedUntil = .now + duration
         isConcealing = false
@@ -616,9 +670,13 @@ final class Concealer27: ObservableObject {
             await previous?.value
             controller.releaseAll()
         }
-        Task { [weak self] in
+        suspensionTask = Task { [weak self] in
             try? await Task.sleep(for: duration)
+            guard !Task.isCancelled else {
+                return
+            }
             self?.suspendedUntil = nil
+            self?.suspensionTask = nil
             self?.update()
         }
     }
@@ -627,6 +685,8 @@ final class Concealer27: ObservableObject {
     /// needed them shown is done. The flash of revealed items is all the user sees of a lift, so
     /// the less of it there is, the better.
     func resumeConcealing() {
+        suspensionTask?.cancel()
+        suspensionTask = nil
         guard suspendedUntil != nil else {
             return
         }
@@ -644,6 +704,8 @@ final class Concealer27: ObservableObject {
         guard needsClickLift else {
             return
         }
+        suspensionTask?.cancel()
+        suspensionTask = nil
         lastChangeAt = .now
         suspendedUntil = .now + duration
         isConcealing = false
@@ -655,15 +717,21 @@ final class Concealer27: ObservableObject {
         }
         applyTask = release
         await release.value
-        Task { [weak self] in
+        suspensionTask = Task { [weak self] in
             try? await Task.sleep(for: duration)
+            guard !Task.isCancelled else {
+                return
+            }
             self?.suspendedUntil = nil
+            self?.suspensionTask = nil
             self?.update()
         }
     }
 
     /// Puts concealment back before the suspension would have run out.
     func endSuspension() {
+        suspensionTask?.cancel()
+        suspensionTask = nil
         guard suspendedUntil != nil else {
             return
         }

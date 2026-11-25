@@ -264,6 +264,12 @@ final class AppState: ObservableObject {
             permissions.accessibility.hasPermission
         case .screenRecording:
             permissions.screenRecording.hasPermission
+        case .fullDiskAccess:
+            if #available(macOS 27.0, *) {
+                permissions.fullDiskAccess.hasPermission
+            } else {
+                true
+            }
         }
     }
 

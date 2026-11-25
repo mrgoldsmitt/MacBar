@@ -418,6 +418,12 @@ struct SystemPanel27Tests {
         #expect(!ItemClick27.panelOpened(before: before, windows: after))
     }
 
+    @Test("A compact system popover above the menu bar means the panel opened")
+    func compactPopover() {
+        let after: [(number: Int, layer: Int, height: CGFloat)] = [(number: 46, layer: 101, height: 110.0)]
+        #expect(ItemClick27.panelOpened(before: before, windows: after))
+    }
+
     // Measured on macOS 27.0: the clock opens "Notification Center", layer 21, the size of
     // the display, about 166 ms after the click. It stands far below Control Centre's level.
     @Test("Notification Center counts, low as its window stands")

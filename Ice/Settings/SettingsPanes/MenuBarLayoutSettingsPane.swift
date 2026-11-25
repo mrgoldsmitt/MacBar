@@ -52,11 +52,8 @@ struct MenuBarLayoutSettingsPane: View {
                 }
                 .font(.system(size: 12, weight: .medium))
                 .foregroundStyle(.secondary)
-                if #available(macOS 27.0, *), !NativeAllowListConcealer27.isAvailable, !MenuBarAssessmentAssertion27.isAvailable {
-                    Text("MacBar cannot hide items on this version of macOS: neither the system menu bar switch nor MenuBarClientCore assertions are available.")
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundStyle(.red)
-                        .multilineTextAlignment(.center)
+                if #available(macOS 27.0, *) {
+                    NoHidingMethodWarning(concealer: appState.concealer27)
                 }
             }
             .padding(15)
@@ -124,6 +121,21 @@ struct MenuBarLayoutSettingsPane: View {
 
                 LayoutBar(imageCache: appState.imageCache, section: name)
             }
+        }
+    }
+}
+
+/// Warns when neither macOS 27 hiding mechanism is available without polling CoreFoundation in `body`.
+@available(macOS 27.0, *)
+private struct NoHidingMethodWarning: View {
+    @ObservedObject var concealer: Concealer27
+
+    var body: some View {
+        if !concealer.isNativeSwitchAvailable, !MenuBarAssessmentAssertion27.isAvailable {
+            Text("MacBar cannot hide items on this version of macOS: neither the system menu bar switch nor MenuBarClientCore assertions are available.")
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(.red)
+                .multilineTextAlignment(.center)
         }
     }
 }

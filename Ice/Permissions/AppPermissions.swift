@@ -14,6 +14,7 @@ final class AppPermissions: ObservableObject {
     enum PermissionKey {
         case accessibility
         case screenRecording
+        case fullDiskAccess
     }
 
     /// The state of the app's granted permissions.
@@ -32,6 +33,20 @@ final class AppPermissions: ObservableObject {
     /// The permission for Screen Recording features.
     let screenRecording = ScreenRecordingPermission()
 
+    /// Type-erased storage for ``fullDiskAccess`` so the property can be availability-gated.
+    private var fullDiskAccessStorage: Permission?
+
+    /// The permission for Full Disk Access, which enables native Allow-in-Menu-Bar hiding on macOS 27+.
+    @available(macOS 27.0, *)
+    var fullDiskAccess: FullDiskAccessPermission {
+        if let permission = fullDiskAccessStorage as? FullDiskAccessPermission {
+            return permission
+        }
+        let permission = FullDiskAccessPermission()
+        fullDiskAccessStorage = permission
+        return permission
+    }
+
     /// The state of the app's granted permissions.
     @Published private(set) var permissionsState: PermissionsState = .missing
 
@@ -40,7 +55,10 @@ final class AppPermissions: ObservableObject {
 
     /// The permissions required for full app functionality.
     var allPermissions: [Permission] {
-        [accessibility, screenRecording]
+        if #available(macOS 27.0, *), let fullDiskAccess = fullDiskAccessStorage {
+            return [accessibility, screenRecording, fullDiskAccess]
+        }
+        return [accessibility, screenRecording]
     }
 
     /// The permissions required for basic app functionality.
@@ -50,6 +68,9 @@ final class AppPermissions: ObservableObject {
 
     /// Creates a new permissions manager.
     init() {
+        if #available(macOS 27.0, *) {
+            self.fullDiskAccessStorage = FullDiskAccessPermission()
+        }
         self.updatePermissionsState()
         self.cancellable = Publishers.MergeMany(allPermissions.map { $0.$hasPermission })
             .receive(on: DispatchQueue.main)

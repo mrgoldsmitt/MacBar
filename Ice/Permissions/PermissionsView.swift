@@ -33,7 +33,10 @@ struct PermissionsView: View {
             headerView
                 .padding(.vertical)
 
-            permissionsStack
+            ScrollView(.vertical, showsIndicators: false) {
+                permissionsStack
+            }
+            .frame(maxHeight: 520)
 
             footerView
                 .padding(.vertical)
@@ -129,7 +132,7 @@ struct PermissionsView: View {
     @ViewBuilder
     private func permissionBox(_ permission: Permission) -> some View {
         IceSection {
-            VStack(spacing: 12) {
+            VStack(spacing: 8) {
                 Text(permission.title)
                     .font(.title.weight(.medium))
                     .underline()
@@ -173,7 +176,7 @@ struct PermissionsView: View {
                     }
                 }
             }
-            .padding(10)
+            .padding(8)
             .frame(maxWidth: .infinity)
         }
     }

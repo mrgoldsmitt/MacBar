@@ -4,6 +4,7 @@
 //
 
 import AppKit
+import Darwin
 import Foundation
 import OSLog
 
@@ -188,9 +189,19 @@ extension NativeAllowListConcealer27 {
             (NSHomeDirectory() + "/Library/Group Containers/group.com.apple.controlcenter") as CFString
         }
 
+        static var plistPath: String {
+            NSHomeDirectory() + "/Library/Group Containers/group.com.apple.controlcenter/Library/Preferences/group.com.apple.controlcenter.plist"
+        }
+
         static func read() throws -> [Any] {
             guard let shared else {
                 throw Failure.unavailable
+            }
+            let fd = Darwin.open(plistPath, O_RDONLY)
+            if fd >= 0 {
+                Darwin.close(fd)
+            } else if errno == EPERM || errno == EACCES {
+                throw Failure.unreadable
             }
             guard
                 let value = shared.copy(key, applicationID, kCFPreferencesCurrentUser, kCFPreferencesAnyHost, container)?.takeRetainedValue(),

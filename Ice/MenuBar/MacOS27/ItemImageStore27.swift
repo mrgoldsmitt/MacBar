@@ -184,6 +184,9 @@ final class ItemImageStore27 {
         let items = await MenuBarItemProvider27.items()
         let concealedPIDs = appState.concealer27.concealedPIDs
         guard let captured = await captureStrip(displayID: displayID, size: stripFrame.size) else {
+            if !ScreenCapture.cachedCheckPermissions() {
+                appState.permissions.screenRecording.recheck()
+            }
             return
         }
         let (strip, scale) = captured
@@ -276,6 +279,9 @@ final class ItemImageStore27 {
 
     /// Shows the applications of items that have no image for a moment, and captures them.
     func photographMissing(items: [MenuBarItem], appState: AppState) async {
+        guard ScreenCapture.cachedCheckPermissions() else {
+            return
+        }
         let now = ProcessInfo.processInfo.systemUptime
         let bundleIDs = Set(items.compactMap { item -> String? in
             guard !item.isControlItem, image(for: item) == nil else {
@@ -294,6 +300,9 @@ final class ItemImageStore27 {
         // mid-fade instead: the concealment applies behind them were still landing a second
         // and a half later, long after the capture judged the bar settled.
         for bundleID in bundleIDs.sorted().prefix(Self.photographsPerPass) {
+            guard ScreenCapture.cachedCheckPermissions() else {
+                break
+            }
             // Waits for the item itself rather than a fixed time: under the native switch it
             // is taken off the bar while concealed and comes back only once MenuBarAgent has
             // laid the bar out (see `Concealer27.showTemporarily(bundleID:untilDrawn:)`).
@@ -329,6 +338,9 @@ final class ItemImageStore27 {
     // MARK: Private
 
     private func captureStrip(displayID: CGDirectDisplayID, size: CGSize) async -> (CGImage, CGFloat)? {
+        guard ScreenCapture.cachedCheckPermissions() else {
+            return nil
+        }
         do {
             let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
             guard let display = content.displays.first(where: { $0.displayID == displayID }) else {
@@ -349,7 +361,13 @@ final class ItemImageStore27 {
             let image = try await SCScreenshotManager.captureImage(contentFilter: filter, configuration: configuration)
             return (image, scale)
         } catch {
-            logger.error("Could not capture the menu bar: \(error, privacy: .public)")
+            let nsError = error as NSError
+            if nsError.domain == SCStreamErrorDomain, nsError.code == SCStreamError.Code.userDeclined.rawValue {
+                ScreenCapture.markCapturePermissionDeclined()
+                logger.warning("Screen recording permission declined; suppressing further captures for this session")
+            } else {
+                logger.error("Could not capture the menu bar: \(error, privacy: .public)")
+            }
             return nil
         }
     }

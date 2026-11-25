@@ -46,52 +46,11 @@ struct AdvancedSettingsPane: View {
                 }
             }
             if #available(macOS 27.0, *) {
-                IceSection("Hiding on macOS 27") {
-                    macOS27HidingMethod
-                }
-                // The native method leaves macOS's own indicators on the bar, so Ice's are only
-                // offered with assessment mode, which takes them away.
-                if settings.macOS27HidingMethod == .assessmentMode {
-                    IceSection("Menu Bar Indicators") {
-                        showCaptureIndicator
-                    }
-                }
+                MacOS27SettingsSection(settings: settings, concealer: appState.concealer27)
             }
             IceSection("Permissions") {
                 allPermissions
             }
-        }
-    }
-
-    @ViewBuilder
-    private var macOS27HidingMethod: some View {
-        IcePicker("Hiding method", selection: $settings.macOS27HidingMethod) {
-            ForEach(MacOS27HidingMethod.allCases) { method in
-                Text(method.localized).tag(method)
-            }
-        }
-        .annotation {
-            switch settings.macOS27HidingMethod {
-            case .nativeAllowList:
-                Text(
-                    "Uses macOS's own Allow in the Menu Bar switch for each hidden app. System items stay "
-                        + "native, including Focus and the camera indicator, and clicks on them need no reveal. "
-                        + "While hidden, those apps show as not allowed in System Settings > Control Center."
-                )
-            case .assessmentMode:
-                Text(
-                    "Uses assessment mode, which also removes Control Centre's modules and needs a brief "
-                        + "reveal to pass clicks to system items. Only for systems where the native switch does not work."
-                )
-            }
-        }
-    }
-
-    @ViewBuilder
-    private var showCaptureIndicator: some View {
-        Toggle(isOn: $settings.showCaptureIndicator) {
-            Text("Show a camera and microphone indicator")
-            Text("macOS draws none of its own while MacBar is hiding items. Click MacBar's to open Control Centre.")
         }
     }
 
@@ -214,6 +173,81 @@ struct AdvancedSettingsPane: View {
                 Text(permission.title)
             }
             .frame(height: 22)
+        }
+    }
+}
+
+@available(macOS 27.0, *)
+private struct MacOS27SettingsSection: View {
+    @ObservedObject var settings: AdvancedSettings
+    @ObservedObject var concealer: Concealer27
+
+    var body: some View {
+        IceSection("Hiding on macOS 27") {
+            macOS27HidingMethod
+            if settings.macOS27HidingMethod == .nativeAllowList && concealer.isUsingAssessmentFallback {
+                fallbackNotice
+            }
+        }
+        // The native method leaves macOS's own indicators on the bar, so MacBar's are only
+        // offered with assessment mode, which takes them away.
+        if settings.macOS27HidingMethod == .assessmentMode || concealer.isUsingAssessmentFallback {
+            IceSection("Menu Bar Indicators") {
+                showCaptureIndicator
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var macOS27HidingMethod: some View {
+        IcePicker("Hiding method", selection: $settings.macOS27HidingMethod) {
+            ForEach(MacOS27HidingMethod.allCases) { method in
+                Text(method.localized).tag(method)
+            }
+        }
+        .annotation {
+            switch settings.macOS27HidingMethod {
+            case .nativeAllowList:
+                Text(
+                    "Uses macOS's own Allow in the Menu Bar switch for each hidden app. System items stay "
+                        + "native, including Focus and the camera indicator, and clicks on them need no reveal. "
+                        + "While hidden, those apps show as not allowed in System Settings > Control Center."
+                )
+            case .assessmentMode:
+                Text(
+                    "Uses assessment mode, which also removes Control Centre's modules and needs a brief "
+                        + "reveal to pass clicks to system items. Only for systems where the native switch does not work."
+                )
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var fallbackNotice: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Using Assessment Mode fallback: macOS blocked reading Control Center's preferences (group.com.apple.controlcenter). Grant Full Disk Access to MacBar to use the native switch.")
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            HStack(spacing: 8) {
+                Button("Open Full Disk Access Settings") {
+                    if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles") {
+                        NSWorkspace.shared.open(url)
+                    }
+                }
+                Button("Recheck") {
+                    concealer.recheckNativeAvailability()
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    @ViewBuilder
+    private var showCaptureIndicator: some View {
+        Toggle(isOn: $settings.showCaptureIndicator) {
+            Text("Show a camera and microphone indicator")
+            Text("macOS draws none of its own while MacBar is hiding items. Click MacBar's to open Control Centre.")
         }
     }
 }
